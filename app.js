@@ -722,55 +722,171 @@ function renderizarResumo(hu, tela, tipoSistema, criticidade, huParseada, catego
   `;
 }
 
+function hashString(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h) + s.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h).toString(36);
+}
+
+function getProgressKey() {
+  const tela = document.getElementById("telaInput")?.value?.trim() || "sem-tela";
+  const hu = document.getElementById("huInput")?.value?.trim() || "";
+  return "qa-progress-" + hashString(tela + "|" + hu.substring(0, 200));
+}
+
+function carregarProgresso() {
+  try {
+    return JSON.parse(sessionStorage.getItem(getProgressKey()) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function salvarProgresso(progresso) {
+  sessionStorage.setItem(getProgressKey(), JSON.stringify(progresso));
+}
+
+function toggleTeste(id, checked) {
+  const progresso = carregarProgresso();
+  progresso[id] = checked;
+  salvarProgresso(progresso);
+  atualizarProgressoCategorias();
+}
+
+function atualizarProgressoCategorias() {
+  document.querySelectorAll(".category").forEach(cat => {
+    const checkboxes = cat.querySelectorAll(".test-list input[type='checkbox']");
+    const total = checkboxes.length;
+    const marcados = Array.from(checkboxes).filter(c => c.checked).length;
+    const progressBar = cat.querySelector(".mini-fill");
+    const progressText = cat.querySelector(".progress-text");
+    if (progressBar && total > 0) {
+      progressBar.style.width = `${(marcados / total) * 100}%`;
+    }
+    if (progressText) {
+      progressText.textContent = `${marcados}/${total} executados`;
+    }
+  });
+}
+
 function renderizarCategorias(categorias) {
   const el = document.getElementById("tab-suite");
-  el.innerHTML = categorias.map(cat => `
+  const progresso = carregarProgresso();
+
+  const resetBtn = `<button class="btn-reset-progress" id="btnResetProgress">🔄 Resetar progresso</button>`;
+
+  el.innerHTML = resetBtn + categorias.map((cat, catIdx) => `
     <div class="category">
       <div class="category-header">
         <div class="category-title">${cat.icone} ${cat.categoria}</div>
         <div class="category-count">${cat.testes.length} testes</div>
       </div>
       <div class="category-reason">${cat.motivo}</div>
+      <div class="category-progress">
+        <div class="mini-bar"><div class="mini-fill" style="width: 0%;"></div></div>
+        <span class="progress-text">0/${cat.testes.length} executados</span>
+      </div>
       <ul class="test-list">
-        ${cat.testes.map(t => `<li>${t}</li>`).join("")}
+        ${cat.testes.map((t, idx) => {
+          const id = `suite-${cat.id}-${idx}`;
+          const checked = progresso[id] === true;
+          return `
+            <li class="${checked ? 'checked' : ''}">
+              <input type="checkbox" id="${id}" ${checked ? 'checked' : ''} />
+              <label for="${id}">${t}</label>
+            </li>
+          `;
+        }).join("")}
       </ul>
     </div>
   `).join("");
+
+  el.querySelectorAll(".test-list input[type='checkbox']").forEach(cb => {
+    cb.addEventListener("change", (e) => {
+      const li = e.target.closest("li");
+      if (e.target.checked) li.classList.add("checked");
+      else li.classList.remove("checked");
+      toggleTeste(e.target.id, e.target.checked);
+    });
+  });
+
+  const btnReset = document.getElementById("btnResetProgress");
+  if (btnReset) {
+    btnReset.addEventListener("click", () => {
+      if (confirm("Tem certeza que deseja resetar todo o progresso de execução?")) {
+        sessionStorage.removeItem(getProgressKey());
+        renderizarCategorias(categorias);
+        if (ultimoResultado) {
+          renderizarCasos(ultimoResultado.casos);
+          if (ultimoResultado.analiseIA) renderizarCasosIA(ultimoResultado.analiseIA);
+        }
+        toast("🔄 Progresso resetado.");
+      }
+    });
+  }
+
+  atualizarProgressoCategorias();
+}
+
+function bindCheckExecutado(container) {
+  container.querySelectorAll(".test-case-executed-toggle input[type='checkbox']").forEach(cb => {
+    cb.addEventListener("change", (e) => {
+      const caseEl = e.target.closest(".test-case");
+      if (e.target.checked) caseEl.classList.add("executed");
+      else caseEl.classList.remove("executed");
+      toggleTeste(e.target.id, e.target.checked);
+    });
+  });
 }
 
 function renderizarCasos(casos) {
   const el = document.getElementById("tab-gerados");
-  el.innerHTML = casos.map(c => `
-    <div class="test-case">
-      <div class="test-case-header">
-        <div style="display: flex; gap: 0.5rem; align-items: center; flex: 1;">
-          <span class="test-case-id">${c.id}</span>
-          <span class="test-case-title">${c.titulo}</span>
+  const progresso = carregarProgresso();
+
+  el.innerHTML = casos.map(c => {
+    const id = `caso-${c.id}`;
+    const executado = progresso[id] === true;
+    return `
+      <div class="test-case ${executado ? 'executed' : ''}">
+        <div class="test-case-header">
+          <div style="display: flex; gap: 0.5rem; align-items: center; flex: 1; flex-wrap: wrap;">
+            <span class="test-case-id">${c.id}</span>
+            <span class="test-case-title">${c.titulo}</span>
+          </div>
+          <span class="test-case-priority priority-${c.prioridade}">${c.prioridade}</span>
         </div>
-        <span class="test-case-priority priority-${c.prioridade}">${c.prioridade}</span>
+        <div class="test-case-executed-toggle">
+          <input type="checkbox" id="${id}" ${executado ? 'checked' : ''} />
+          <label for="${id}">Marcar como executado</label>
+        </div>
+        <div class="test-case-section">
+          <strong>Tipo</strong>
+          <span>${c.tipo}</span>
+        </div>
+        <div class="test-case-section">
+          <strong>Pré-condições</strong>
+          <ul>${c.preCondicoes.map(p => `<li>${p}</li>`).join("")}</ul>
+        </div>
+        <div class="test-case-section">
+          <strong>Passos</strong>
+          <ol>${c.passos.map(p => `<li>${p}</li>`).join("")}</ol>
+        </div>
+        <div class="test-case-section">
+          <strong>Resultado Esperado</strong>
+          <p>${c.resultadoEsperado}</p>
+        </div>
+        <div class="test-case-section">
+          <strong>Dados de Teste</strong>
+          <p>${c.dadosTeste}</p>
+        </div>
       </div>
-      <div class="test-case-section">
-        <strong>Tipo</strong>
-        <span>${c.tipo}</span>
-      </div>
-      <div class="test-case-section">
-        <strong>Pré-condições</strong>
-        <ul>${c.preCondicoes.map(p => `<li>${p}</li>`).join("")}</ul>
-      </div>
-      <div class="test-case-section">
-        <strong>Passos</strong>
-        <ol>${c.passos.map(p => `<li>${p}</li>`).join("")}</ol>
-      </div>
-      <div class="test-case-section">
-        <strong>Resultado Esperado</strong>
-        <p>${c.resultadoEsperado}</p>
-      </div>
-      <div class="test-case-section">
-        <strong>Dados de Teste</strong>
-        <p>${c.dadosTeste}</p>
-      </div>
-    </div>
-  `).join("");
+    `;
+  }).join("");
+
+  bindCheckExecutado(el);
 }
 
 function renderizarCobertura(riscos, cobertura) {
@@ -945,45 +1061,54 @@ function renderizarCasosIA(analise) {
   `;
 
   if (analise.casosAdicionais?.length) {
+    const progresso = carregarProgresso();
     html += `<h3 style="margin: 1.5rem 0 1rem; color: #c084fc;">✨ Casos Adicionais Sugeridos pela IA (${analise.casosAdicionais.length})</h3>`;
-    html += analise.casosAdicionais.map(c => `
-      <div class="test-case ai-generated">
-        <div class="test-case-header">
-          <div style="display: flex; gap: 0.5rem; align-items: center; flex: 1; flex-wrap: wrap;">
-            <span class="test-case-id">${c.id}</span>
-            <span class="test-case-title">${c.titulo}</span>
-            <span class="ai-badge">✨ IA</span>
+    html += analise.casosAdicionais.map(c => {
+      const id = `ia-${c.id}`;
+      const executado = progresso[id] === true;
+      return `
+        <div class="test-case ai-generated ${executado ? 'executed' : ''}">
+          <div class="test-case-header">
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex: 1; flex-wrap: wrap;">
+              <span class="test-case-id">${c.id}</span>
+              <span class="test-case-title">${c.titulo}</span>
+              <span class="ai-badge">✨ IA</span>
+            </div>
+            <span class="test-case-priority priority-${c.prioridade}">${c.prioridade}</span>
           </div>
-          <span class="test-case-priority priority-${c.prioridade}">${c.prioridade}</span>
-        </div>
-        <div class="test-case-section">
-          <strong>Tipo</strong>
-          <span>${c.tipo}</span>
-        </div>
-        <div class="test-case-section">
-          <strong>Pré-condições</strong>
-          <ul>${(c.preCondicoes || []).map(p => `<li>${p}</li>`).join("")}</ul>
-        </div>
-        <div class="test-case-section">
-          <strong>Passos</strong>
-          <ol>${(c.passos || []).map(p => `<li>${p}</li>`).join("")}</ol>
-        </div>
-        <div class="test-case-section">
-          <strong>Resultado Esperado</strong>
-          <p>${c.resultadoEsperado || ""}</p>
-        </div>
-        <div class="test-case-section">
-          <strong>Dados de Teste</strong>
-          <p>${c.dadosTeste || ""}</p>
-        </div>
-        ${c.justificativa ? `
+          <div class="test-case-executed-toggle">
+            <input type="checkbox" id="${id}" ${executado ? 'checked' : ''} />
+            <label for="${id}">Marcar como executado</label>
+          </div>
           <div class="test-case-section">
-            <strong>💡 Justificativa da IA</strong>
-            <p style="font-style: italic; color: var(--text-muted);">${c.justificativa}</p>
+            <strong>Tipo</strong>
+            <span>${c.tipo}</span>
           </div>
-        ` : ""}
-      </div>
-    `).join("");
+          <div class="test-case-section">
+            <strong>Pré-condições</strong>
+            <ul>${(c.preCondicoes || []).map(p => `<li>${p}</li>`).join("")}</ul>
+          </div>
+          <div class="test-case-section">
+            <strong>Passos</strong>
+            <ol>${(c.passos || []).map(p => `<li>${p}</li>`).join("")}</ol>
+          </div>
+          <div class="test-case-section">
+            <strong>Resultado Esperado</strong>
+            <p>${c.resultadoEsperado || ""}</p>
+          </div>
+          <div class="test-case-section">
+            <strong>Dados de Teste</strong>
+            <p>${c.dadosTeste || ""}</p>
+          </div>
+          ${c.justificativa ? `
+            <div class="test-case-section">
+              <strong>💡 Justificativa da IA</strong>
+              <p style="font-style: italic; color: var(--text-muted);">${c.justificativa}</p>
+            </div>
+          ` : ""}
+        </div>
+      `;
+    }).join("");
   }
 
   if (analise.recomendacoes?.length) {
@@ -996,6 +1121,7 @@ function renderizarCasosIA(analise) {
   }
 
   el.innerHTML = html;
+  bindCheckExecutado(el);
 }
 
 // ---------- Event Handlers ----------
