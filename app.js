@@ -7,6 +7,7 @@ let ultimoResultado = null;
 
 // ---------- Configurações de IA ----------
 const STORAGE_KEY = "qa-assistant-ai-config";
+let SERVER_IA_STATUS = null;
 
 const AI_MODELS = {
   anthropic: [
@@ -49,15 +50,34 @@ function atualizarStatusIA() {
   const toggleEl = document.getElementById("useAI");
 
   if (config && config.apiKey) {
-    statusEl.textContent = `✅ Configurado: ${config.provider} (${config.model})`;
+    statusEl.textContent = `✅ Configurado (navegador): ${config.provider} (${config.model})`;
     statusEl.classList.add("configured");
     toggleEl.disabled = false;
+    toggleEl.checked = true;
+  } else if (SERVER_IA_STATUS && SERVER_IA_STATUS.serverConfigured) {
+    const provider = SERVER_IA_STATUS.defaultProvider;
+    statusEl.textContent = `✅ Configurado (servidor): ${provider} — IA ativa por padrão`;
+    statusEl.classList.add("configured");
+    toggleEl.disabled = false;
+    toggleEl.checked = true;
   } else {
     statusEl.textContent = "IA não configurada — clique em ⚙️ Configurações";
     statusEl.classList.remove("configured");
     toggleEl.checked = false;
     toggleEl.disabled = true;
   }
+}
+
+async function detectarStatusServidor() {
+  try {
+    const resp = await fetch("/api/ai-analyze", { method: "GET" });
+    if (resp.ok) {
+      SERVER_IA_STATUS = await resp.json();
+    }
+  } catch (e) {
+    SERVER_IA_STATUS = null;
+  }
+  atualizarStatusIA();
 }
 
 function popularModelos(provider) {
@@ -857,18 +877,28 @@ function gerarMarkdown(hu, tela, tipoSistema, criticidade, huParseada, categoria
 // ---------- Chamada à IA via serverless ----------
 async function analisarComIA({ hu, tela, tipoSistema, criticidade, casosExistentes }) {
   const config = getConfigIA();
-  if (!config || !config.apiKey) throw new Error("IA não configurada.");
+  const usarServidor = !config && SERVER_IA_STATUS && SERVER_IA_STATUS.serverConfigured;
+
+  if (!config && !usarServidor) {
+    throw new Error("IA não configurada (nem navegador, nem servidor).");
+  }
+
+  const payload = {
+    hu, tela, tipoSistema, criticidade, casosExistentes
+  };
+
+  if (config && config.apiKey) {
+    payload.apiKey = config.apiKey;
+    payload.provider = config.provider;
+    payload.model = config.model;
+  } else if (usarServidor) {
+    payload.provider = SERVER_IA_STATUS.defaultProvider;
+  }
 
   const resp = await fetch("/api/ai-analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      hu, tela, tipoSistema, criticidade,
-      casosExistentes,
-      apiKey: config.apiKey,
-      provider: config.provider,
-      model: config.model
-    })
+    body: JSON.stringify(payload)
   });
 
   const data = await resp.json();
@@ -1230,3 +1260,4 @@ document.getElementById("btnClearKey").addEventListener("click", () => {
 // Inicialização
 popularModelos("anthropic");
 atualizarStatusIA();
+detectarStatusServidor();

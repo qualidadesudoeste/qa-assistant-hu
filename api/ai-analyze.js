@@ -153,6 +153,20 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") return res.status(200).end();
+
+  if (req.method === "GET") {
+    const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
+    const hasOpenAI = !!process.env.OPENAI_API_KEY;
+    let defaultProvider = null;
+    if (hasAnthropic) defaultProvider = "anthropic";
+    else if (hasOpenAI) defaultProvider = "openai";
+    return res.status(200).json({
+      serverConfigured: hasAnthropic || hasOpenAI,
+      providers: { anthropic: hasAnthropic, openai: hasOpenAI },
+      defaultProvider
+    });
+  }
+
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {

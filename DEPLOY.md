@@ -29,7 +29,7 @@ git commit -m "feat: QA Assistant v2.0 com integração IA"
 2. Conecte e envie:
 
 ```bash
-git remote add origin https://github.com/SEU-USUARIO/qa-assistant-hu.git
+git remote add origin https://github.com/qualidadesudoeste/qa-assistant-hu.git
 git branch -M main
 git push -u origin main
 ```
