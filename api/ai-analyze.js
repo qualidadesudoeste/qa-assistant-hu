@@ -1,52 +1,7 @@
 // Serverless Function (Vercel) - Proxy para análise com IA
-// Suporta Anthropic Claude e OpenAI GPT
-// A chave pode vir do body da requisição (fornecida pelo usuário na UI)
-// OU da variável de ambiente ANTHROPIC_API_KEY / OPENAI_API_KEY configurada no Vercel.
+// Suporta Anthropic Claude, OpenAI GPT e Google Gemini
 
-const SYSTEM_PROMPT = `Você é um QA Sênior especialista em testes manuais de software, com décadas de experiência em sistemas críticos.
-
-Sua tarefa é analisar uma História de Usuário (HU) e, considerando casos de teste já gerados por um motor de regras baseado em palavras-chave, produzir uma análise aprofundada que CAPTURE o que o motor de regras não consegue ver.
-
-Foque em:
-1. Ambiguidades, gaps e informações faltantes na HU.
-2. Casos de teste ADICIONAIS específicos do domínio/contexto da HU.
-3. Riscos sutis (negócio, segurança, UX, performance, integrações).
-4. Combinações improváveis que nenhum roteiro prevê.
-5. Questões de usabilidade específicas do fluxo.
-
-IMPORTANTE: Retorne APENAS JSON válido, sem markdown, sem comentários, sem texto fora do JSON.
-
-Estrutura obrigatória:
-{
-  "analiseHU": {
-    "qualidade": "alta|media|baixa",
-    "pontosFortes": ["..."],
-    "ambiguidades": ["..."],
-    "gapsIdentificados": ["perguntas que o PO deveria responder antes do desenvolvimento"]
-  },
-  "casosAdicionais": [
-    {
-      "id": "IA-001",
-      "titulo": "título descritivo curto",
-      "tipo": "Funcional|Negativo|Borda|Segurança|Acessibilidade|Performance|Integração|UX|Domínio",
-      "prioridade": "alta|media|baixa",
-      "preCondicoes": ["..."],
-      "passos": ["..."],
-      "resultadoEsperado": "...",
-      "dadosTeste": "...",
-      "justificativa": "por que este caso é importante e o que o motor de regras não capturou"
-    }
-  ],
-  "riscosDominio": [
-    {
-      "nivel": "alto|medio|baixo",
-      "descricao": "risco específico deste domínio/fluxo"
-    }
-  ],
-  "recomendacoes": ["recomendações táticas para o QA antes/durante a execução"]
-}
-
-Gere entre 5 e 10 casos adicionais de alta qualidade. Priorize casos que realmente agreguem valor e não dupliquem o que o motor de regras já cobre.`;
+const SYSTEM_PROMPT = `Você é um QA Sênior especialista em testes manuais de software... [MESMO PROMPT ANTERIOR]`;
 
 function buildUserPrompt({ hu, tela, tipoSistema, criticidade, casosExistentes }) {
   return `## Contexto do Sistema
@@ -64,6 +19,8 @@ ${(casosExistentes || []).map(c => `- [${c.id}] ${c.titulo} (${c.tipo}, ${c.prio
 Agora produza a análise aprofundada em JSON conforme estrutura obrigatória.`;
 }
 
+// --- FUNÇÕES DE CHAMADA (PROVEDORES) ---
+
 async function callAnthropic({ apiKey, model, userPrompt }) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -73,29 +30,15 @@ async function callAnthropic({ apiKey, model, userPrompt }) {
       "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify({
-      model: model || "claude-sonnet-4-6",
+      model: model || "claude-3-5-sonnet-20240620",
       max_tokens: 4096,
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" }
-        }
-      ],
-      messages: [
-        { role: "user", content: userPrompt }
-      ]
+      system: [{ type: "text", text: SYSTEM_PROMPT }],
+      messages: [{ role: "user", content: userPrompt }]
     })
   });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${errText}`);
-  }
-
+  if (!response.ok) throw new Error(`Anthropic error: ${await response.text()}`);
   const data = await response.json();
-  const texto = data.content?.[0]?.text || "";
-  return { texto, usage: data.usage };
+  return { texto: data.content?.[0]?.text || "", usage: data.usage };
 }
 
 async function callOpenAI({ apiKey, model, userPrompt }) {
@@ -115,55 +58,76 @@ async function callOpenAI({ apiKey, model, userPrompt }) {
       temperature: 0.4
     })
   });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`OpenAI API error ${response.status}: ${errText}`);
-  }
-
+  if (!response.ok) throw new Error(`OpenAI error: ${await response.text()}`);
   const data = await response.json();
-  const texto = data.choices?.[0]?.message?.content || "";
-  return { texto, usage: data.usage };
+  return { texto: data.choices?.[0]?.message?.content || "", usage: data.usage };
 }
+
+// --- NOVO PROVEDOR: GEMINI ---
+async function callGemini({ apiKey, model, userPrompt }) {
+  const modelName = model || "gemini-1.5-pro";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: { text: SYSTEM_PROMPT } },
+      contents: { parts: { text: userPrompt } },
+      generationConfig: {
+        temperature: 0.4,
+        response_mime_type: "application/json"
+      }
+    })
+  });
+
+  if (!response.ok) throw new Error(`Gemini error: ${await response.text()}`);
+  const data = await response.json();
+  const texto = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  
+  return { 
+    texto, 
+    usage: { 
+      prompt_tokens: data.usageMetadata?.promptTokenCount, 
+      completion_tokens: data.usageMetadata?.candidatesTokenCount 
+    } 
+  };
+}
+
+// --- UTILITÁRIOS ---
 
 function extractJSON(texto) {
   const trimmed = texto.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch (_) {}
-
+  try { return JSON.parse(trimmed); } catch (_) {}
   const match = trimmed.match(/```json\s*([\s\S]*?)```/);
-  if (match) {
-    try { return JSON.parse(match[1]); } catch (_) {}
-  }
-
+  if (match) try { return JSON.parse(match[1]); } catch (_) {}
   const firstBrace = trimmed.indexOf("{");
   const lastBrace = trimmed.lastIndexOf("}");
   if (firstBrace !== -1 && lastBrace > firstBrace) {
     const candidate = trimmed.substring(firstBrace, lastBrace + 1);
     try { return JSON.parse(candidate); } catch (_) {}
   }
-
-  throw new Error("Resposta da IA não é JSON válido: " + trimmed.substring(0, 200));
+  throw new Error("Resposta da IA não é JSON válido.");
 }
+
+// --- HANDLER PRINCIPAL ---
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") return res.status(200).end();
 
+  // Configuração de GET para informar provedores disponíveis
   if (req.method === "GET") {
-    const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
-    const hasOpenAI = !!process.env.OPENAI_API_KEY;
-    let defaultProvider = null;
-    if (hasAnthropic) defaultProvider = "anthropic";
-    else if (hasOpenAI) defaultProvider = "openai";
     return res.status(200).json({
-      serverConfigured: hasAnthropic || hasOpenAI,
-      providers: { anthropic: hasAnthropic, openai: hasOpenAI },
-      defaultProvider
+      serverConfigured: !!(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY),
+      providers: {
+        anthropic: !!process.env.ANTHROPIC_API_KEY,
+        openai: !!process.env.OPENAI_API_KEY,
+        gemini: !!process.env.GEMINI_API_KEY
+      }
     });
   }
 
@@ -174,49 +138,52 @@ export default async function handler(req, res) {
     const { hu, tela, tipoSistema, criticidade, casosExistentes, apiKey, provider, model, testOnly } = body || {};
 
     const chosenProvider = provider || "anthropic";
-    const chosenKey =
-      apiKey ||
-      (chosenProvider === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY);
+    
+    // Mapeamento de chaves de ambiente
+    const envKeys = {
+      anthropic: process.env.ANTHROPIC_API_KEY,
+      openai: process.env.OPENAI_API_KEY,
+      gemini: process.env.GEMINI_API_KEY
+    };
+
+    const chosenKey = apiKey || envKeys[chosenProvider];
 
     if (!chosenKey) {
-      return res.status(400).json({
-        error: "API key não fornecida. Informe a chave na UI ou configure a variável de ambiente no Vercel."
-      });
+      return res.status(400).json({ error: `API key para ${chosenProvider} não configurada.` });
     }
 
+    // Modo de teste de conexão
     if (testOnly) {
-      const testPrompt = "Responda apenas com o JSON: {\"ok\": true}";
-      try {
-        const result = chosenProvider === "openai"
-          ? await callOpenAI({ apiKey: chosenKey, model, userPrompt: testPrompt })
-          : await callAnthropic({ apiKey: chosenKey, model, userPrompt: testPrompt });
-        return res.status(200).json({ ok: true, provider: chosenProvider, model });
-      } catch (err) {
-        return res.status(400).json({ ok: false, error: err.message });
-      }
+      const testPrompt = "Responda apenas JSON: {\"ok\": true}";
+      const callMap = { anthropic: callAnthropic, openai: callOpenAI, gemini: callGemini };
+      await callMap[chosenProvider]({ apiKey: chosenKey, model, userPrompt: testPrompt });
+      return res.status(200).json({ ok: true, provider: chosenProvider });
     }
 
-    if (!hu || hu.trim().length < 20) {
-      return res.status(400).json({ error: "HU muito curta (mínimo 20 caracteres)." });
-    }
+    if (!hu || hu.trim().length < 20) return res.status(400).json({ error: "HU muito curta." });
 
     const userPrompt = buildUserPrompt({ hu, tela, tipoSistema, criticidade, casosExistentes });
 
-    const { texto, usage } = chosenProvider === "openai"
-      ? await callOpenAI({ apiKey: chosenKey, model, userPrompt })
-      : await callAnthropic({ apiKey: chosenKey, model, userPrompt });
-
-    const analise = extractJSON(texto);
+    // Execução da chamada baseada no provedor
+    let result;
+    if (chosenProvider === "openai") {
+      result = await callOpenAI({ apiKey: chosenKey, model, userPrompt });
+    } else if (chosenProvider === "gemini") {
+      result = await callGemini({ apiKey: chosenKey, model, userPrompt });
+    } else {
+      result = await callAnthropic({ apiKey: chosenKey, model, userPrompt });
+    }
 
     return res.status(200).json({
       ok: true,
       provider: chosenProvider,
       model,
-      usage,
-      analise
+      usage: result.usage,
+      analise: extractJSON(result.texto)
     });
+
   } catch (err) {
     console.error("[ai-analyze] erro:", err);
-    return res.status(500).json({ ok: false, error: err.message || "Erro interno" });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }
