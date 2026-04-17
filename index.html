@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QA Assistant — Gerador de Casos de Teste a partir de HU</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-content">
+      <div class="logo">
+        <span class="logo-icon">🧪</span>
+        <div>
+          <h1>QA Assistant</h1>
+          <p class="subtitle">Gerador Inteligente de Casos de Teste baseado em HU</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn-ghost" id="btnOpenSettings" title="Configurar IA">⚙️ Configurações de IA</button>
+        <span class="badge">v2.0</span>
+        <span class="author">by Leonardo Carvalho</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Painel de Entrada -->
+    <section class="panel input-panel">
+      <div class="panel-header">
+        <h2>📝 História de Usuário (HU)</h2>
+        <button class="btn-ghost" id="btnExample">Carregar Exemplo</button>
+      </div>
+
+      <div class="form-group">
+        <label for="telaInput">Nome da Tela / Funcionalidade</label>
+        <input type="text" id="telaInput" placeholder="Ex: Tela de Login, Checkout, Cadastro de Produto..." />
+      </div>
+
+      <div class="form-group">
+        <label for="huInput">História de Usuário</label>
+        <textarea
+          id="huInput"
+          rows="10"
+          placeholder="Como [perfil de usuário],&#10;Eu quero [ação/funcionalidade],&#10;Para que [benefício/valor].&#10;&#10;Critérios de aceite:&#10;- ...&#10;- ...&#10;- ..."
+        ></textarea>
+        <small class="hint">💡 Dica: inclua critérios de aceite para resultados mais precisos.</small>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="tipoSistema">Tipo de Sistema</label>
+          <select id="tipoSistema">
+            <option value="web">Web</option>
+            <option value="mobile">Mobile</option>
+            <option value="desktop">Desktop</option>
+            <option value="api">API / Backend</option>
+            <option value="ia">Sistema com IA</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="criticidade">Criticidade</label>
+          <select id="criticidade">
+            <option value="alta">Alta</option>
+            <option value="media" selected>Média</option>
+            <option value="baixa">Baixa</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="ai-toggle">
+        <label class="switch">
+          <input type="checkbox" id="useAI" />
+          <span class="slider"></span>
+        </label>
+        <div class="ai-toggle-text">
+          <strong>✨ Análise com IA</strong>
+          <small id="aiStatus">IA não configurada — clique em ⚙️ Configurações</small>
+        </div>
+      </div>
+
+      <button class="btn-primary" id="btnAnalisar">
+        <span>🔍</span> Analisar HU e Gerar Testes
+      </button>
+      <button class="btn-secondary" id="btnLimpar">Limpar</button>
+    </section>
+
+    <!-- Painel de Resultados -->
+    <section class="panel results-panel" id="resultsPanel" style="display: none;">
+      <div class="panel-header">
+        <h2>📊 Resultado da Análise</h2>
+        <div class="result-actions">
+          <button class="btn-ghost" id="btnCopiar">📋 Copiar</button>
+          <button class="btn-ghost" id="btnExportar">💾 Exportar .md</button>
+        </div>
+      </div>
+
+      <div id="resumoHU" class="resumo-box"></div>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="suite">Testes da Suíte Aplicáveis</button>
+        <button class="tab" data-tab="gerados">Casos Gerados (Regras)</button>
+        <button class="tab" data-tab="ia" id="tabIAButton" style="display: none;">✨ Casos Gerados (IA)</button>
+        <button class="tab" data-tab="cobertura">Cobertura e Riscos</button>
+      </div>
+
+      <div class="tab-content active" id="tab-suite"></div>
+      <div class="tab-content" id="tab-gerados"></div>
+      <div class="tab-content" id="tab-ia"></div>
+      <div class="tab-content" id="tab-cobertura"></div>
+    </section>
+  </main>
+
+  <!-- Modal de Configuração de IA -->
+  <div class="modal-overlay" id="settingsModal" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>⚙️ Configurações de IA</h2>
+        <button class="btn-close" id="btnCloseSettings">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info">
+          🔒 <strong>Privacidade:</strong> Sua chave é armazenada apenas localmente no seu navegador (localStorage)
+          e enviada somente para o endpoint serverless deste app que a repassa ao provedor de IA escolhido.
+          Nunca é compartilhada com terceiros.
+        </div>
+
+        <div class="form-group">
+          <label for="aiProvider">Provedor de IA</label>
+          <select id="aiProvider">
+            <option value="anthropic">Anthropic Claude (recomendado)</option>
+            <option value="openai">OpenAI GPT</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="aiModel">Modelo</label>
+          <select id="aiModel">
+            <!-- populado via JS -->
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="apiKeyInput">API Key</label>
+          <div class="input-with-button">
+            <input type="password" id="apiKeyInput" placeholder="sk-ant-... ou sk-..." />
+            <button class="btn-ghost" id="btnToggleKey" type="button">👁️</button>
+          </div>
+          <small class="hint" id="keyHint">
+            Obtenha sua chave em
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="rememberKey" checked />
+            Salvar chave neste navegador
+          </label>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-ghost" id="btnTestKey">🧪 Testar Conexão</button>
+          <button class="btn-ghost btn-danger" id="btnClearKey">🗑️ Limpar</button>
+          <button class="btn-primary" id="btnSaveSettings">Salvar</button>
+        </div>
+
+        <div id="testResult" class="test-result" style="display: none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="app-footer">
+    <p>
+      Baseado na <strong>Suíte de Testes Manuais — Padrão QA Sênior</strong> •
+      Desenvolvido para apoiar QAs na era da IA
+    </p>
+  </footer>
+
+  <script src="suite-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

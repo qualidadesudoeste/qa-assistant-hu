@@ -1,0 +1,16 @@
+{
+  "name": "qa-assistant-hu",
+  "version": "2.0.0",
+  "description": "Gerador de casos de teste manuais a partir de Histórias de Usuário com suporte a IA (Anthropic Claude / OpenAI)",
+  "main": "index.html",
+  "type": "module",
+  "engines": {
+    "node": ">=18.x"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "author": "Leonardo Carvalho",
+  "license": "MIT"
+}
