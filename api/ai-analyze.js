@@ -65,32 +65,39 @@ async function callOpenAI({ apiKey, model, userPrompt }) {
 
 // --- NOVO PROVEDOR: GEMINI ---
 async function callGemini({ apiKey, model, userPrompt }) {
-  const modelName = model || "gemini-1.5-pro";
+  const modelName = model || "gemini-2.5-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      system_instruction: { parts: { text: SYSTEM_PROMPT } },
-      contents: { parts: { text: userPrompt } },
+      system_instruction: {
+        parts: [{ text: SYSTEM_PROMPT }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: userPrompt }]
+        }
+      ],
       generationConfig: {
         temperature: 0.4,
-        response_mime_type: "application/json"
+        responseMimeType: "application/json"
       }
     })
   });
 
-  if (!response.ok) throw new Error(`Gemini error: ${await response.text()}`);
+  if (!response.ok) throw new Error(`Gemini error ${response.status}: ${await response.text()}`);
   const data = await response.json();
   const texto = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  
-  return { 
-    texto, 
-    usage: { 
-      prompt_tokens: data.usageMetadata?.promptTokenCount, 
-      completion_tokens: data.usageMetadata?.candidatesTokenCount 
-    } 
+
+  return {
+    texto,
+    usage: {
+      prompt_tokens: data.usageMetadata?.promptTokenCount,
+      completion_tokens: data.usageMetadata?.candidatesTokenCount
+    }
   };
 }
 
@@ -121,13 +128,21 @@ export default async function handler(req, res) {
 
   // Configuração de GET para informar provedores disponíveis
   if (req.method === "GET") {
+    const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
+    const hasOpenAI = !!process.env.OPENAI_API_KEY;
+    const hasGemini = !!process.env.GEMINI_API_KEY;
+    let defaultProvider = null;
+    if (hasGemini) defaultProvider = "gemini";
+    else if (hasAnthropic) defaultProvider = "anthropic";
+    else if (hasOpenAI) defaultProvider = "openai";
     return res.status(200).json({
-      serverConfigured: !!(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY),
+      serverConfigured: hasAnthropic || hasOpenAI || hasGemini,
       providers: {
-        anthropic: !!process.env.ANTHROPIC_API_KEY,
-        openai: !!process.env.OPENAI_API_KEY,
-        gemini: !!process.env.GEMINI_API_KEY
-      }
+        anthropic: hasAnthropic,
+        openai: hasOpenAI,
+        gemini: hasGemini
+      },
+      defaultProvider
     });
   }
 

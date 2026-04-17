@@ -19,6 +19,12 @@ const AI_MODELS = {
     { value: "gpt-4o", label: "GPT-4o" },
     { value: "gpt-4o-mini", label: "GPT-4o-mini (rápido/barato)" },
     { value: "gpt-4-turbo", label: "GPT-4 Turbo" }
+  ],
+  gemini: [
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (recomendado - rápido/grátis)" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro (máxima qualidade)" },
+    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash (legado)" },
+    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro (legado)" }
   ]
 };
 
@@ -88,6 +94,8 @@ function popularModelos(provider) {
   const keyHint = document.getElementById("keyHint");
   if (provider === "anthropic") {
     keyHint.innerHTML = `Obtenha sua chave em <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>`;
+  } else if (provider === "gemini") {
+    keyHint.innerHTML = `Obtenha sua chave grátis em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>`;
   } else {
     keyHint.innerHTML = `Obtenha sua chave em <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a>`;
   }
@@ -1008,7 +1016,13 @@ async function analisarComIA({ hu, tela, tipoSistema, criticidade, casosExistent
     payload.provider = config.provider;
     payload.model = config.model;
   } else if (usarServidor) {
-    payload.provider = SERVER_IA_STATUS.defaultProvider;
+    let prov = SERVER_IA_STATUS.defaultProvider;
+    if (!prov && SERVER_IA_STATUS.providers) {
+      if (SERVER_IA_STATUS.providers.gemini) prov = "gemini";
+      else if (SERVER_IA_STATUS.providers.anthropic) prov = "anthropic";
+      else if (SERVER_IA_STATUS.providers.openai) prov = "openai";
+    }
+    payload.provider = prov;
   }
 
   const resp = await fetch("/api/ai-analyze", {
