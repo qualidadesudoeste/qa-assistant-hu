@@ -4,6 +4,8 @@
 
 // ---------- Estado global ----------
 let ultimoResultado = null;
+let planoAtualId = null;
+let statusCasos = {}; // { caseId: { status: 'passou'|'falhou'|'nao_executado', fail_count: number } }
 
 // ---------- Configurações de IA ----------
 const STORAGE_KEY = "qa-assistant-ai-config";
@@ -839,6 +841,126 @@ function renderizarCategorias(categorias) {
   atualizarProgressoCategorias();
 }
 
+function atualizarVisualCaso(caseEl) {
+  const caseId = caseEl.dataset.caseId;
+  const slot = caseEl.querySelector(".status-slot");
+  if (slot) slot.innerHTML = statusBadgeHTML(caseId);
+  caseEl.classList.remove("status-passou", "status-falhou");
+  const st = statusCasos[caseId];
+  if (st?.status === "passou") caseEl.classList.add("status-passou");
+  if (st?.status === "falhou") caseEl.classList.add("status-falhou");
+  const btnHist = caseEl.querySelector(".btn-status-history");
+  if (btnHist) btnHist.disabled = !(st?.fail_count > 0);
+}
+
+async function aplicarStatusCaso(caseEl, novoStatus, { observacao } = {}) {
+  const caseId = caseEl.dataset.caseId;
+  const titulo = caseEl.dataset.titulo;
+  const tipo = caseEl.dataset.tipo;
+  const origem = caseEl.dataset.origem;
+
+  const atual = statusCasos[caseId] || { status: "nao_executado", fail_count: 0 };
+
+  if (novoStatus === "falhou") {
+    statusCasos[caseId] = { status: "falhou", fail_count: atual.fail_count + 1 };
+  } else {
+    statusCasos[caseId] = { status: novoStatus, fail_count: atual.fail_count };
+  }
+  atualizarVisualCaso(caseEl);
+
+  if (!planoAtualId || !window.SupaAPI?.isReady()) return;
+
+  try {
+    if (novoStatus === "falhou") {
+      await window.SupaAPI.salvarExecucao({
+        planId: planoAtualId, caseId, status: "falhou", titulo, tipo, origem
+      });
+      await window.SupaAPI.registrarFalha({ planId: planoAtualId, caseId, observacao });
+    } else {
+      await window.SupaAPI.salvarExecucao({
+        planId: planoAtualId, caseId, status: novoStatus, titulo, tipo, origem
+      });
+    }
+  } catch (err) {
+    console.error("[status] erro salvando:", err);
+    toast("Erro ao salvar status: " + err.message, "error");
+  }
+}
+
+async function mostrarHistoricoFalhas(caseEl) {
+  const caseId = caseEl.dataset.caseId;
+  if (!planoAtualId || !window.SupaAPI?.isReady()) {
+    toast("Histórico disponível apenas com Supabase configurado.", "error");
+    return;
+  }
+  try {
+    const hist = await window.SupaAPI.historicoFalhas({ planId: planoAtualId, caseId });
+    const modal = document.getElementById("historicoModal");
+    const body = document.getElementById("historicoBody");
+    const title = document.getElementById("historicoTitle");
+    title.textContent = `📜 Histórico de falhas — ${caseId}`;
+    if (!hist.length) {
+      body.innerHTML = `<p style="color: var(--text-muted);">Nenhuma falha registrada.</p>`;
+    } else {
+      body.innerHTML = `<ul class="fail-history-list">${hist.map(h => `
+        <li>
+          <time>${new Date(h.created_at).toLocaleString("pt-BR")}</time>
+          <p>${h.observacao ? h.observacao.replace(/</g, "&lt;") : "<em style='color:var(--text-muted)'>(sem observação)</em>"}</p>
+        </li>
+      `).join("")}</ul>`;
+    }
+    modal.style.display = "flex";
+  } catch (err) {
+    toast("Erro ao carregar histórico: " + err.message, "error");
+  }
+}
+
+function pedirObservacaoFalha() {
+  return new Promise(resolve => {
+    const modal = document.getElementById("falhaModal");
+    const textarea = document.getElementById("falhaObservacao");
+    textarea.value = "";
+    modal.style.display = "flex";
+    setTimeout(() => textarea.focus(), 50);
+
+    const cleanup = () => {
+      modal.style.display = "none";
+      document.getElementById("btnFalhaSalvar").onclick = null;
+      document.getElementById("btnFalhaCancelar").onclick = null;
+    };
+    document.getElementById("btnFalhaSalvar").onclick = () => {
+      const obs = textarea.value.trim();
+      cleanup();
+      resolve({ confirmado: true, observacao: obs });
+    };
+    document.getElementById("btnFalhaCancelar").onclick = () => {
+      cleanup();
+      resolve({ confirmado: false });
+    };
+  });
+}
+
+function bindStatusCasos(container) {
+  container.querySelectorAll(".test-case-status-controls button").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const caseEl = e.target.closest(".test-case");
+      const action = btn.dataset.action;
+      if (action === "historico") {
+        await mostrarHistoricoFalhas(caseEl);
+        return;
+      }
+      if (action === "falhou") {
+        const { confirmado, observacao } = await pedirObservacaoFalha();
+        if (!confirmado) return;
+        await aplicarStatusCaso(caseEl, "falhou", { observacao });
+      } else {
+        await aplicarStatusCaso(caseEl, action);
+      }
+    });
+  });
+}
+
+// Mantido só para compat com o tab "suite" (checklist livre).
 function bindCheckExecutado(container) {
   container.querySelectorAll(".test-case-executed-toggle input[type='checkbox']").forEach(cb => {
     cb.addEventListener("change", (e) => {
@@ -850,51 +972,73 @@ function bindCheckExecutado(container) {
   });
 }
 
+function statusBadgeHTML(caseId) {
+  const st = statusCasos[caseId] || { status: "nao_executado", fail_count: 0 };
+  let badge = "";
+  if (st.status === "passou") badge = `<span class="status-badge status-pass">✅ Passou</span>`;
+  else if (st.status === "falhou") badge = `<span class="status-badge status-fail">❌ Falhou</span>`;
+  const failBadge = st.fail_count > 0
+    ? `<span class="fail-count-badge" title="Falhas registradas">💥 ${st.fail_count}x</span>`
+    : "";
+  return badge + failBadge;
+}
+
+function renderCasoCard(c, opts = {}) {
+  const caseId = c.id;
+  const st = statusCasos[caseId] || { status: "nao_executado", fail_count: 0 };
+  const stateCls = st.status === "passou" ? "status-passou"
+                  : st.status === "falhou" ? "status-falhou" : "";
+  const origem = opts.origem || "regras";
+  const extra = opts.extraHTML || "";
+  const aiCls = opts.aiGenerated ? "ai-generated" : "";
+  const aiBadge = opts.aiGenerated ? `<span class="ai-badge">✨ IA</span>` : "";
+
+  return `
+    <div class="test-case ${aiCls} ${stateCls}" data-case-id="${caseId}" data-origem="${origem}" data-titulo="${(c.titulo || "").replace(/"/g, "&quot;")}" data-tipo="${c.tipo || ""}">
+      <div class="test-case-header">
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex: 1; flex-wrap: wrap;">
+          <span class="test-case-id">${c.id}</span>
+          <span class="test-case-title">${c.titulo}</span>
+          ${aiBadge}
+          <span class="status-slot">${statusBadgeHTML(caseId)}</span>
+        </div>
+        <span class="test-case-priority priority-${c.prioridade}">${c.prioridade}</span>
+      </div>
+      <div class="test-case-status-controls">
+        <button class="btn-status btn-status-pass" data-action="passou">✅ Passou</button>
+        <button class="btn-status btn-status-fail" data-action="falhou">❌ Falhou</button>
+        <button class="btn-status btn-status-reset" data-action="nao_executado">↺ Limpar</button>
+        <button class="btn-status btn-status-history" data-action="historico" ${st.fail_count > 0 ? "" : "disabled"}>📜 Histórico</button>
+      </div>
+      <div class="test-case-section">
+        <strong>Tipo</strong>
+        <span>${c.tipo}</span>
+      </div>
+      <div class="test-case-section">
+        <strong>Pré-condições</strong>
+        <ul>${(c.preCondicoes || []).map(p => `<li>${p}</li>`).join("")}</ul>
+      </div>
+      <div class="test-case-section">
+        <strong>Passos</strong>
+        <ol>${(c.passos || []).map(p => `<li>${p}</li>`).join("")}</ol>
+      </div>
+      <div class="test-case-section">
+        <strong>Resultado Esperado</strong>
+        <p>${c.resultadoEsperado || ""}</p>
+      </div>
+      <div class="test-case-section">
+        <strong>Dados de Teste</strong>
+        <p>${c.dadosTeste || ""}</p>
+      </div>
+      ${extra}
+    </div>
+  `;
+}
+
 function renderizarCasos(casos) {
   const el = document.getElementById("tab-gerados");
-  const progresso = carregarProgresso();
-
-  el.innerHTML = casos.map(c => {
-    const id = `caso-${c.id}`;
-    const executado = progresso[id] === true;
-    return `
-      <div class="test-case ${executado ? 'executed' : ''}">
-        <div class="test-case-header">
-          <div style="display: flex; gap: 0.5rem; align-items: center; flex: 1; flex-wrap: wrap;">
-            <span class="test-case-id">${c.id}</span>
-            <span class="test-case-title">${c.titulo}</span>
-          </div>
-          <span class="test-case-priority priority-${c.prioridade}">${c.prioridade}</span>
-        </div>
-        <div class="test-case-executed-toggle">
-          <input type="checkbox" id="${id}" ${executado ? 'checked' : ''} />
-          <label for="${id}">Marcar como executado</label>
-        </div>
-        <div class="test-case-section">
-          <strong>Tipo</strong>
-          <span>${c.tipo}</span>
-        </div>
-        <div class="test-case-section">
-          <strong>Pré-condições</strong>
-          <ul>${c.preCondicoes.map(p => `<li>${p}</li>`).join("")}</ul>
-        </div>
-        <div class="test-case-section">
-          <strong>Passos</strong>
-          <ol>${c.passos.map(p => `<li>${p}</li>`).join("")}</ol>
-        </div>
-        <div class="test-case-section">
-          <strong>Resultado Esperado</strong>
-          <p>${c.resultadoEsperado}</p>
-        </div>
-        <div class="test-case-section">
-          <strong>Dados de Teste</strong>
-          <p>${c.dadosTeste}</p>
-        </div>
-      </div>
-    `;
-  }).join("");
-
-  bindCheckExecutado(el);
+  el.innerHTML = casos.map(c => renderCasoCard(c, { origem: "regras" })).join("");
+  bindStatusCasos(el);
 }
 
 function renderizarCobertura(riscos, cobertura) {
@@ -1075,53 +1219,14 @@ function renderizarCasosIA(analise) {
   `;
 
   if (analise.casosAdicionais?.length) {
-    const progresso = carregarProgresso();
     html += `<h3 style="margin: 1.5rem 0 1rem; color: #c084fc;">✨ Casos Adicionais Sugeridos pela IA (${analise.casosAdicionais.length})</h3>`;
     html += analise.casosAdicionais.map(c => {
-      const id = `ia-${c.id}`;
-      const executado = progresso[id] === true;
-      return `
-        <div class="test-case ai-generated ${executado ? 'executed' : ''}">
-          <div class="test-case-header">
-            <div style="display: flex; gap: 0.5rem; align-items: center; flex: 1; flex-wrap: wrap;">
-              <span class="test-case-id">${c.id}</span>
-              <span class="test-case-title">${c.titulo}</span>
-              <span class="ai-badge">✨ IA</span>
-            </div>
-            <span class="test-case-priority priority-${c.prioridade}">${c.prioridade}</span>
-          </div>
-          <div class="test-case-executed-toggle">
-            <input type="checkbox" id="${id}" ${executado ? 'checked' : ''} />
-            <label for="${id}">Marcar como executado</label>
-          </div>
-          <div class="test-case-section">
-            <strong>Tipo</strong>
-            <span>${c.tipo}</span>
-          </div>
-          <div class="test-case-section">
-            <strong>Pré-condições</strong>
-            <ul>${(c.preCondicoes || []).map(p => `<li>${p}</li>`).join("")}</ul>
-          </div>
-          <div class="test-case-section">
-            <strong>Passos</strong>
-            <ol>${(c.passos || []).map(p => `<li>${p}</li>`).join("")}</ol>
-          </div>
-          <div class="test-case-section">
-            <strong>Resultado Esperado</strong>
-            <p>${c.resultadoEsperado || ""}</p>
-          </div>
-          <div class="test-case-section">
-            <strong>Dados de Teste</strong>
-            <p>${c.dadosTeste || ""}</p>
-          </div>
-          ${c.justificativa ? `
-            <div class="test-case-section">
-              <strong>💡 Justificativa da IA</strong>
-              <p style="font-style: italic; color: var(--text-muted);">${c.justificativa}</p>
-            </div>
-          ` : ""}
-        </div>
-      `;
+      const extra = c.justificativa ? `
+        <div class="test-case-section">
+          <strong>💡 Justificativa da IA</strong>
+          <p style="font-style: italic; color: var(--text-muted);">${c.justificativa}</p>
+        </div>` : "";
+      return renderCasoCard(c, { origem: "ia", aiGenerated: true, extraHTML: extra });
     }).join("");
   }
 
@@ -1135,19 +1240,25 @@ function renderizarCasosIA(analise) {
   }
 
   el.innerHTML = html;
-  bindCheckExecutado(el);
+  bindStatusCasos(el);
 }
 
 // ---------- Event Handlers ----------
 document.getElementById("btnAnalisar").addEventListener("click", async () => {
   const hu = document.getElementById("huInput").value.trim();
   const tela = document.getElementById("telaInput").value.trim();
+  const projeto = document.getElementById("projetoInput").value.trim();
+  const sprint = document.getElementById("sprintInput").value.trim();
   const tipoSistema = document.getElementById("tipoSistema").value;
   const criticidade = document.getElementById("criticidade").value;
   const useAI = document.getElementById("useAI").checked;
 
   if (!hu || hu.length < 20) {
     toast("Por favor, insira uma HU com pelo menos 20 caracteres.", "error");
+    return;
+  }
+  if (!projeto || !sprint) {
+    toast("Preencha Projeto e Sprint para salvar o plano.", "error");
     return;
   }
 
@@ -1177,7 +1288,28 @@ document.getElementById("btnAnalisar").addEventListener("click", async () => {
       }
     }
 
-    ultimoResultado = { hu, tela, tipoSistema, criticidade, huParseada, categorias, casos, riscos, cobertura, analiseIA };
+    ultimoResultado = { hu, tela, projeto, sprint, tipoSistema, criticidade, huParseada, categorias, casos, riscos, cobertura, analiseIA };
+
+    statusCasos = {};
+    planoAtualId = null;
+    if (window.SupaAPI?.isReady()) {
+      try {
+        btn.innerHTML = '<span class="spinner"></span> Salvando plano...';
+        const plano = await window.SupaAPI.upsertPlano({
+          projeto, sprint, tela, hu, tipoSistema, criticidade,
+          resultado: { casos, riscos, cobertura, categorias, analiseIA, huParseada }
+        });
+        planoAtualId = plano.id;
+        const { execucoes } = await window.SupaAPI.carregarPlano(plano.id);
+        execucoes.forEach(e => {
+          statusCasos[e.case_id] = { status: e.status, fail_count: e.fail_count };
+        });
+        await recarregarListaPlanos();
+      } catch (err) {
+        console.error("[supabase] erro:", err);
+        toast("Plano gerado, mas não foi salvo no Supabase: " + err.message, "error");
+      }
+    }
 
     renderizarResumo(hu, tela, tipoSistema, criticidade, huParseada, categorias, casos, cobertura);
     renderizarCategorias(categorias);
@@ -1206,8 +1338,13 @@ document.getElementById("btnAnalisar").addEventListener("click", async () => {
 document.getElementById("btnLimpar").addEventListener("click", () => {
   document.getElementById("huInput").value = "";
   document.getElementById("telaInput").value = "";
+  document.getElementById("projetoInput").value = "";
+  document.getElementById("sprintInput").value = "";
   document.getElementById("resultsPanel").style.display = "none";
+  document.getElementById("retomarPlano").value = "";
   ultimoResultado = null;
+  planoAtualId = null;
+  statusCasos = {};
 });
 
 document.getElementById("btnExample").addEventListener("click", () => {
@@ -1397,7 +1534,110 @@ document.getElementById("btnClearKey").addEventListener("click", () => {
   toast("🗑️ Configurações de IA removidas.");
 });
 
+// ---------- Integração Supabase (listar/retomar planos) ----------
+async function recarregarListaPlanos() {
+  const select = document.getElementById("retomarPlano");
+  const wrapper = document.getElementById("retomarPlanoWrapper");
+  const statusEl = document.getElementById("supabaseStatus");
+  if (!select || !wrapper) return;
+
+  if (!window.SupaAPI?.isReady()) {
+    statusEl.textContent = "⚠️ Supabase não configurado — preencha config.js para salvar planos.";
+    statusEl.classList.add("warning");
+    wrapper.style.display = "block";
+    return;
+  }
+
+  try {
+    const planos = await window.SupaAPI.listarPlanos();
+    select.innerHTML = `<option value="">— Selecione um plano salvo —</option>` +
+      planos.map(p => {
+        const data = new Date(p.updated_at).toLocaleString("pt-BR");
+        const label = `[${p.projeto} / ${p.sprint}] ${p.tela || "(sem tela)"} — ${data}`;
+        return `<option value="${p.id}">${label}</option>`;
+      }).join("");
+    statusEl.textContent = `✅ Supabase conectado (${planos.length} planos salvos)`;
+    statusEl.classList.remove("warning");
+    wrapper.style.display = "block";
+  } catch (err) {
+    statusEl.textContent = "❌ Erro ao conectar com Supabase: " + err.message;
+    statusEl.classList.add("warning");
+    wrapper.style.display = "block";
+  }
+}
+
+async function retomarPlanoSalvo(planId) {
+  if (!planId) return;
+  try {
+    const { plano, execucoes } = await window.SupaAPI.carregarPlano(planId);
+    const r = plano.resultado_json || {};
+
+    document.getElementById("projetoInput").value = plano.projeto || "";
+    document.getElementById("sprintInput").value = plano.sprint || "";
+    document.getElementById("telaInput").value = plano.tela || "";
+    document.getElementById("huInput").value = plano.hu || "";
+    document.getElementById("tipoSistema").value = plano.tipo_sistema || "web";
+    document.getElementById("criticidade").value = plano.criticidade || "media";
+
+    planoAtualId = plano.id;
+    statusCasos = {};
+    execucoes.forEach(e => {
+      statusCasos[e.case_id] = { status: e.status, fail_count: e.fail_count };
+    });
+
+    ultimoResultado = {
+      hu: plano.hu,
+      tela: plano.tela,
+      projeto: plano.projeto,
+      sprint: plano.sprint,
+      tipoSistema: plano.tipo_sistema,
+      criticidade: plano.criticidade,
+      huParseada: r.huParseada || parsearHU(plano.hu),
+      categorias: r.categorias || [],
+      casos: r.casos || [],
+      riscos: r.riscos || [],
+      cobertura: r.cobertura || { casosGerados: 0, tiposCobertos: [] },
+      analiseIA: r.analiseIA || null
+    };
+
+    renderizarResumo(plano.hu, plano.tela, plano.tipo_sistema, plano.criticidade,
+      ultimoResultado.huParseada, ultimoResultado.categorias, ultimoResultado.casos, ultimoResultado.cobertura);
+    renderizarCategorias(ultimoResultado.categorias);
+    renderizarCasos(ultimoResultado.casos);
+    renderizarCobertura(ultimoResultado.riscos, ultimoResultado.cobertura);
+
+    const tabIA = document.getElementById("tabIAButton");
+    if (ultimoResultado.analiseIA) {
+      tabIA.style.display = "inline-block";
+      renderizarCasosIA(ultimoResultado.analiseIA);
+    } else {
+      tabIA.style.display = "none";
+    }
+
+    document.getElementById("resultsPanel").style.display = "block";
+    document.getElementById("resultsPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+    toast("📂 Plano retomado com sucesso!");
+  } catch (err) {
+    toast("Erro ao retomar plano: " + err.message, "error");
+  }
+}
+
+document.getElementById("retomarPlano").addEventListener("change", (e) => {
+  if (e.target.value) retomarPlanoSalvo(e.target.value);
+});
+document.getElementById("btnReloadPlanos").addEventListener("click", recarregarListaPlanos);
+
+// Fecha modais clicando fora
+["falhaModal", "historicoModal"].forEach(id => {
+  const m = document.getElementById(id);
+  if (m) m.addEventListener("click", (e) => { if (e.target === m) m.style.display = "none"; });
+});
+document.getElementById("btnHistoricoFechar")?.addEventListener("click", () => {
+  document.getElementById("historicoModal").style.display = "none";
+});
+
 // Inicialização
 popularModelos("anthropic");
 atualizarStatusIA();
 detectarStatusServidor();
+recarregarListaPlanos();

@@ -19,7 +19,7 @@
       <div class="header-actions">
         <button class="btn-ghost" id="btnOpenSettings" title="Configurar IA">⚙️ Configurações de IA</button>
         <span class="badge">v2.0</span>
-        <span class="author">by Leonardo Carvalho</span>
+        <span class="author">By Equipe de Qualidade Fabrica</span>
       </div>
     </div>
   </header>
@@ -32,9 +32,31 @@
         <button class="btn-ghost" id="btnExample">Carregar Exemplo</button>
       </div>
 
+      <div class="form-row">
+        <div class="form-group">
+          <label for="projetoInput">Projeto</label>
+          <input type="text" id="projetoInput" placeholder="Ex: Portal Cliente, App Mobile..." />
+        </div>
+        <div class="form-group">
+          <label for="sprintInput">Sprint</label>
+          <input type="text" id="sprintInput" placeholder="Ex: Sprint 42, 2026-Q2-S3..." />
+        </div>
+      </div>
+
       <div class="form-group">
         <label for="telaInput">Nome da Tela / Funcionalidade</label>
         <input type="text" id="telaInput" placeholder="Ex: Tela de Login, Checkout, Cadastro de Produto..." />
+      </div>
+
+      <div class="form-group" id="retomarPlanoWrapper" style="display: none;">
+        <label for="retomarPlano">📂 Retomar plano existente</label>
+        <div class="input-with-button">
+          <select id="retomarPlano">
+            <option value="">— Selecione um plano salvo —</option>
+          </select>
+          <button class="btn-ghost" id="btnReloadPlanos" type="button" title="Atualizar lista">🔄</button>
+        </div>
+        <small class="hint" id="supabaseStatus">Conectando ao Supabase...</small>
       </div>
 
       <div class="form-group">
@@ -171,6 +193,37 @@
     </div>
   </div>
 
+  <!-- Modal de Observação de Falha -->
+  <div class="modal-overlay" id="falhaModal" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>❌ Registrar falha no caso de teste</h2>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="falhaObservacao">Observação (opcional)</label>
+          <textarea id="falhaObservacao" rows="4" placeholder="Descreva o que falhou, passos para reproduzir, mensagens de erro..."></textarea>
+          <small class="hint">Cada falha é registrada no histórico com data/hora.</small>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-ghost" id="btnFalhaCancelar" type="button">Cancelar</button>
+          <button class="btn-primary" id="btnFalhaSalvar" type="button">Registrar falha</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Histórico de Falhas -->
+  <div class="modal-overlay" id="historicoModal" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="historicoTitle">📜 Histórico</h2>
+        <button class="btn-close" id="btnHistoricoFechar">✕</button>
+      </div>
+      <div class="modal-body" id="historicoBody"></div>
+    </div>
+  </div>
+
   <footer class="app-footer">
     <p>
       Baseado na <strong>Suíte de Testes Manuais — Padrão QA Sênior</strong> •
@@ -178,6 +231,9 @@
     </p>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="supabase-client.js"></script>
   <script src="suite-data.js"></script>
   <script src="app.js"></script>
 </body>

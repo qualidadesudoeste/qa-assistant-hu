@@ -62,10 +62,39 @@ ${(casosExistentes || []).map(c => `- [${c.id}] ${c.titulo} (${c.tipo}, ${c.prio
 Agora produza a análise aprofundada em JSON conforme estrutura obrigatória.`;
 }
 
+// --- RETRY COM BACKOFF EXPONENCIAL ---
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504, 529]);
+const MAX_RETRIES = 3;
+
+async function fetchWithRetry(url, options, providerName) {
+  let lastError;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) return response;
+
+      if (!RETRYABLE_STATUS.has(response.status) || attempt === MAX_RETRIES - 1) {
+        const body = await response.text();
+        const err = new Error(`${providerName} error ${response.status}: ${body}`);
+        err.status = response.status;
+        throw err;
+      }
+      lastError = new Error(`${providerName} ${response.status}`);
+    } catch (err) {
+      if (err.status && !RETRYABLE_STATUS.has(err.status)) throw err;
+      lastError = err;
+      if (attempt === MAX_RETRIES - 1) throw err;
+    }
+    const delay = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
+    await new Promise(r => setTimeout(r, delay));
+  }
+  throw lastError;
+}
+
 // --- FUNÇÕES DE CHAMADA (PROVEDORES) ---
 
 async function callAnthropic({ apiKey, model, userPrompt }) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -78,14 +107,13 @@ async function callAnthropic({ apiKey, model, userPrompt }) {
       system: [{ type: "text", text: SYSTEM_PROMPT }],
       messages: [{ role: "user", content: userPrompt }]
     })
-  });
-  if (!response.ok) throw new Error(`Anthropic error: ${await response.text()}`);
+  }, "Anthropic");
   const data = await response.json();
   return { texto: data.content?.[0]?.text || "", usage: data.usage };
 }
 
 async function callOpenAI({ apiKey, model, userPrompt }) {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -100,8 +128,7 @@ async function callOpenAI({ apiKey, model, userPrompt }) {
       ],
       temperature: 0.4
     })
-  });
-  if (!response.ok) throw new Error(`OpenAI error: ${await response.text()}`);
+  }, "OpenAI");
   const data = await response.json();
   return { texto: data.choices?.[0]?.message?.content || "", usage: data.usage };
 }
@@ -111,7 +138,7 @@ async function callGemini({ apiKey, model, userPrompt }) {
   const modelName = model || "gemini-2.5-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -129,9 +156,8 @@ async function callGemini({ apiKey, model, userPrompt }) {
         responseMimeType: "application/json"
       }
     })
-  });
+  }, "Gemini");
 
-  if (!response.ok) throw new Error(`Gemini error ${response.status}: ${await response.text()}`);
   const data = await response.json();
   const texto = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
