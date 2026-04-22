@@ -1429,14 +1429,14 @@ function abrirModal() {
   const rememberEl = document.getElementById("rememberKey");
 
   if (config) {
-    providerEl.value = config.provider || "anthropic";
+    providerEl.value = config.provider || "gemini";
     popularModelos(providerEl.value);
     modelEl.value = config.model || AI_MODELS[providerEl.value][0].value;
     keyEl.value = config.apiKey || "";
     rememberEl.checked = config.remember !== false;
   } else {
-    providerEl.value = "anthropic";
-    popularModelos("anthropic");
+    providerEl.value = "gemini";
+    popularModelos("gemini");
     keyEl.value = "";
     rememberEl.checked = true;
   }
@@ -1637,7 +1637,7 @@ document.getElementById("btnHistoricoFechar")?.addEventListener("click", () => {
 });
 
 // Inicialização
-popularModelos("anthropic");
+popularModelos("gemini");
 atualizarStatusIA();
 detectarStatusServidor();
 recarregarListaPlanos();

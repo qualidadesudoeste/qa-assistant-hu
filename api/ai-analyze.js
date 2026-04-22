@@ -221,7 +221,7 @@ export default async function handler(req, res) {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const { hu, tela, tipoSistema, criticidade, casosExistentes, apiKey, provider, model, testOnly } = body || {};
 
-    const chosenProvider = provider || "anthropic";
+    const chosenProvider = provider || "gemini";
     
     // Mapeamento de chaves de ambiente
     const envKeys = {
