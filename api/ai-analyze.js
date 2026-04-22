@@ -64,7 +64,7 @@ Agora produza a análise aprofundada em JSON conforme estrutura obrigatória.`;
 
 // --- RETRY COM BACKOFF EXPONENCIAL ---
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504, 529]);
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 2;
 
 async function fetchWithRetry(url, options, providerName) {
   let lastError;
@@ -153,7 +153,8 @@ async function callGemini({ apiKey, model, userPrompt }) {
       ],
       generationConfig: {
         temperature: 0.4,
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        maxOutputTokens: 2048
       }
     })
   }, "Gemini");
