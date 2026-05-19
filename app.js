@@ -56,14 +56,15 @@ function atualizarStatusIA() {
   const statusEl = document.getElementById("aiStatus");
   const toggleEl = document.getElementById("useAI");
 
-  if (config && config.apiKey) {
-    statusEl.textContent = `✅ Configurado (navegador): ${config.provider} (${config.model})`;
+  // Servidor tem prioridade sobre config do navegador.
+  if (SERVER_IA_STATUS && SERVER_IA_STATUS.serverConfigured) {
+    const provider = SERVER_IA_STATUS.defaultProvider;
+    statusEl.textContent = `✅ Configurado (servidor): ${provider} — IA ativa por padrão`;
     statusEl.classList.add("configured");
     toggleEl.disabled = false;
     toggleEl.checked = true;
-  } else if (SERVER_IA_STATUS && SERVER_IA_STATUS.serverConfigured) {
-    const provider = SERVER_IA_STATUS.defaultProvider;
-    statusEl.textContent = `✅ Configurado (servidor): ${provider} — IA ativa por padrão`;
+  } else if (config && config.apiKey) {
+    statusEl.textContent = `✅ Configurado (navegador): ${config.provider} (${config.model})`;
     statusEl.classList.add("configured");
     toggleEl.disabled = false;
     toggleEl.checked = true;
@@ -1144,28 +1145,30 @@ function gerarMarkdown(hu, tela, tipoSistema, criticidade, huParseada, categoria
 // ---------- Chamada à IA via serverless ----------
 async function analisarComIA({ hu, tela, tipoSistema, criticidade, casosExistentes }) {
   const config = getConfigIA();
-  const usarServidor = !config && SERVER_IA_STATUS && SERVER_IA_STATUS.serverConfigured;
+  const servidorOk = SERVER_IA_STATUS && SERVER_IA_STATUS.serverConfigured;
 
-  if (!config && !usarServidor) {
-    throw new Error("IA não configurada (nem navegador, nem servidor).");
+  // Servidor (env vars do Vercel) tem prioridade absoluta sobre config do navegador.
+  // Config local só é usada se o servidor não estiver configurado.
+  if (!servidorOk && !(config && config.apiKey)) {
+    throw new Error("IA não configurada (nem servidor, nem navegador).");
   }
 
   const payload = {
     hu, tela, tipoSistema, criticidade, casosExistentes
   };
 
-  if (config && config.apiKey) {
+  if (servidorOk) {
+    let prov = SERVER_IA_STATUS.defaultProvider;
+    if (!prov && SERVER_IA_STATUS.providers) {
+      if (SERVER_IA_STATUS.providers.openai) prov = "openai";
+      else if (SERVER_IA_STATUS.providers.anthropic) prov = "anthropic";
+      else if (SERVER_IA_STATUS.providers.gemini) prov = "gemini";
+    }
+    payload.provider = prov;
+  } else {
     payload.apiKey = config.apiKey;
     payload.provider = config.provider;
     payload.model = config.model;
-  } else if (usarServidor) {
-    let prov = SERVER_IA_STATUS.defaultProvider;
-    if (!prov && SERVER_IA_STATUS.providers) {
-      if (SERVER_IA_STATUS.providers.gemini) prov = "gemini";
-      else if (SERVER_IA_STATUS.providers.anthropic) prov = "anthropic";
-      else if (SERVER_IA_STATUS.providers.openai) prov = "openai";
-    }
-    payload.provider = prov;
   }
 
   const resp = await fetch("/api/ai-analyze", {

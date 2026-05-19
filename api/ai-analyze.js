@@ -273,10 +273,13 @@ export default async function handler(req, res) {
     const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
     const hasOpenAI = !!process.env.OPENAI_API_KEY;
     const hasGemini = !!process.env.GEMINI_API_KEY;
+    // Ordem de prioridade quando múltiplas keys estão configuradas no servidor.
+    // OpenAI/Anthropic vêm antes do Gemini porque, quando o operador escolhe pagar
+    // por uma dessas, é sinal de que prefere o serviço pago como padrão.
     let defaultProvider = null;
-    if (hasGemini) defaultProvider = "gemini";
+    if (hasOpenAI) defaultProvider = "openai";
     else if (hasAnthropic) defaultProvider = "anthropic";
-    else if (hasOpenAI) defaultProvider = "openai";
+    else if (hasGemini) defaultProvider = "gemini";
     return res.status(200).json({
       serverConfigured: hasAnthropic || hasOpenAI || hasGemini,
       providers: {
