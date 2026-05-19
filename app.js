@@ -1709,65 +1709,14 @@ document.getElementById("btnHistoricoFechar")?.addEventListener("click", () => {
   document.getElementById("historicoModal").style.display = "none";
 });
 
-// ---------- Importação de múltiplas HUs via JSON ----------
-let husImportadas = [];
-let huImportadaAtivaIdx = -1;
-
-function normalizarStatus(s) {
-  return (s || "").toString().toLowerCase().trim().replace(/\s+/g, "-");
-}
-
-function renderizarSidebarHUs() {
-  const list = document.getElementById("huSidebarList");
-  if (husImportadas.length === 0) {
-    list.innerHTML = "<p style='color: var(--text-muted); font-size: 0.85rem;'>Nenhuma HU importada.</p>";
-    return;
-  }
-  list.innerHTML = husImportadas.map((hu, idx) => {
-    const statusClass = `status-${normalizarStatus(hu.status)}`;
-    const ativo = idx === huImportadaAtivaIdx ? "active" : "";
-    return `
-      <div class="hu-card ${ativo}" data-idx="${idx}">
-        <div class="hu-card-header">
-          <span class="hu-codigo">#${hu.codigo || "—"}</span>
-          ${hu.status ? `<span class="hu-status ${statusClass}">${hu.status}</span>` : ""}
-        </div>
-        <div class="hu-card-title">${hu.resumo || "(sem resumo)"}</div>
-        <div class="hu-card-meta">${hu.projeto || "—"}${hu.sprint ? " • Sprint " + hu.sprint : ""}</div>
-        ${hu._planoGerado ? '<span class="hu-card-flag">✓ Plano gerado</span>' : ""}
-      </div>
-    `;
-  }).join("");
-
-  list.querySelectorAll(".hu-card").forEach(el => {
-    el.addEventListener("click", () => {
-      const idx = parseInt(el.dataset.idx, 10);
-      selecionarHUImportada(idx);
-    });
+// ---------- Importação de múltiplas HUs via JSON (plano consolidado) ----------
+function montarHUConsolidada(cards) {
+  const blocos = cards.map((c, i) => {
+    const titulo = c.resumo || `HU ${i + 1}`;
+    const codigo = c.codigo ? `(Código ${c.codigo})` : "";
+    return `## HU ${i + 1}: ${titulo} ${codigo}\n\n${c.descricao}`;
   });
-}
-
-async function selecionarHUImportada(idx) {
-  const hu = husImportadas[idx];
-  if (!hu) return;
-
-  huImportadaAtivaIdx = idx;
-  renderizarSidebarHUs();
-
-  document.getElementById("projetoInput").value = hu.projeto || "";
-  document.getElementById("sprintInput").value = hu.sprint || "";
-  document.getElementById("telaInput").value = hu.resumo || "";
-  document.getElementById("huInput").value = hu.descricao || "";
-
-  // Defaults para campos não presentes no JSON importado
-  document.getElementById("tipoSistema").value = "web";
-  document.getElementById("criticidade").value = "media";
-
-  const ok = await executarAnaliseHU({ skipSupabase: true });
-  if (ok) {
-    hu._planoGerado = true;
-    renderizarSidebarHUs();
-  }
+  return `# Plano Consolidado — ${cards.length} HUs\n\n${blocos.join("\n\n---\n\n")}`;
 }
 
 document.getElementById("btnImportarHUs").addEventListener("click", () => {
@@ -1786,38 +1735,34 @@ document.getElementById("fileImportHU").addEventListener("change", async (e) => 
       throw new Error("JSON deve ser um array de HUs.");
     }
 
-    husImportadas = data.map(item => ({
+    const cards = data.map(item => ({
       codigo: item["Código"] ?? item.codigo ?? item.code,
       resumo: item["Resumo"] ?? item.resumo ?? item.title ?? "",
       descricao: item["Descrição"] ?? item.descricao ?? item.description ?? item.hu ?? "",
       projeto: item["Projeto"] ?? item.projeto ?? item.project ?? "",
-      sprint: item["Sprint"] ?? item.sprint ?? "",
-      status: item["Status"] ?? item.status ?? "",
-      categoria: item["Categoria"] ?? item.categoria ?? "",
-      _planoGerado: false
-    })).filter(h => h.descricao && h.descricao.length >= 20);
+      sprint: item["Sprint"] ?? item.sprint ?? ""
+    })).filter(c => c.descricao && c.descricao.length >= 20);
 
-    if (husImportadas.length === 0) {
+    if (cards.length === 0) {
       toast("Nenhuma HU válida encontrada (campo Descrição obrigatório, mín. 20 chars).", "error");
       return;
     }
 
-    huImportadaAtivaIdx = -1;
-    renderizarSidebarHUs();
-    document.body.classList.add("has-hu-sidebar");
-    document.getElementById("huSidebar").style.display = "block";
-    toast(`📥 ${husImportadas.length} HUs importadas. Clique em uma para gerar o plano.`);
+    const primeiro = cards[0];
+    document.getElementById("projetoInput").value = primeiro.projeto || "";
+    document.getElementById("sprintInput").value = primeiro.sprint || "";
+    document.getElementById("telaInput").value = primeiro.sprint
+      ? `Plano Consolidado Sprint ${primeiro.sprint}`
+      : `Plano Consolidado (${cards.length} HUs)`;
+    document.getElementById("huInput").value = montarHUConsolidada(cards);
+    document.getElementById("tipoSistema").value = "web";
+    document.getElementById("criticidade").value = "media";
+
+    toast(`📥 ${cards.length} HUs consolidadas. Gerando plano único...`);
+    await executarAnaliseHU({ skipSupabase: true });
   } catch (err) {
     toast(`Erro ao importar JSON: ${err.message}`, "error");
   }
-});
-
-document.getElementById("btnFecharSidebar").addEventListener("click", () => {
-  if (husImportadas.length > 0 && !confirm("Fechar a lista e descartar as HUs importadas?")) return;
-  husImportadas = [];
-  huImportadaAtivaIdx = -1;
-  document.body.classList.remove("has-hu-sidebar");
-  document.getElementById("huSidebar").style.display = "none";
 });
 
 // Inicialização
