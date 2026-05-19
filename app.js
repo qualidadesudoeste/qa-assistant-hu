@@ -1245,8 +1245,8 @@ function renderizarCasosIA(analise) {
   bindStatusCasos(el);
 }
 
-// ---------- Event Handlers ----------
-document.getElementById("btnAnalisar").addEventListener("click", async () => {
+// ---------- Análise (extraída para reuso entre botão e batch import) ----------
+async function executarAnaliseHU({ skipSupabase = false } = {}) {
   const hu = document.getElementById("huInput").value.trim();
   const tela = document.getElementById("telaInput").value.trim();
   const projeto = document.getElementById("projetoInput").value.trim();
@@ -1257,11 +1257,11 @@ document.getElementById("btnAnalisar").addEventListener("click", async () => {
 
   if (!hu || hu.length < 20) {
     toast("Por favor, insira uma HU com pelo menos 20 caracteres.", "error");
-    return;
+    return false;
   }
   if (!projeto || !sprint) {
     toast("Preencha Projeto e Sprint para salvar o plano.", "error");
-    return;
+    return false;
   }
 
   const btn = document.getElementById("btnAnalisar");
@@ -1294,7 +1294,7 @@ document.getElementById("btnAnalisar").addEventListener("click", async () => {
 
     statusCasos = {};
     planoAtualId = null;
-    if (window.SupaAPI?.isReady()) {
+    if (!skipSupabase && window.SupaAPI?.isReady()) {
       try {
         btn.innerHTML = '<span class="spinner"></span> Salvando plano...';
         const plano = await window.SupaAPI.upsertPlano({
@@ -1331,11 +1331,15 @@ document.getElementById("btnAnalisar").addEventListener("click", async () => {
 
     const totalCasos = casos.length + (analiseIA?.casosAdicionais?.length || 0);
     toast(`✅ Análise concluída! ${totalCasos} casos gerados${analiseIA ? " (incluindo IA)" : ""}.`);
+    return true;
   } finally {
     btn.disabled = false;
     btn.innerHTML = btnOriginal;
   }
-});
+}
+
+// ---------- Event Handlers ----------
+document.getElementById("btnAnalisar").addEventListener("click", () => executarAnaliseHU());
 
 document.getElementById("btnLimpar").addEventListener("click", () => {
   document.getElementById("huInput").value = "";
@@ -1703,6 +1707,117 @@ document.getElementById("btnReloadPlanos").addEventListener("click", recarregarL
 });
 document.getElementById("btnHistoricoFechar")?.addEventListener("click", () => {
   document.getElementById("historicoModal").style.display = "none";
+});
+
+// ---------- Importação de múltiplas HUs via JSON ----------
+let husImportadas = [];
+let huImportadaAtivaIdx = -1;
+
+function normalizarStatus(s) {
+  return (s || "").toString().toLowerCase().trim().replace(/\s+/g, "-");
+}
+
+function renderizarSidebarHUs() {
+  const list = document.getElementById("huSidebarList");
+  if (husImportadas.length === 0) {
+    list.innerHTML = "<p style='color: var(--text-muted); font-size: 0.85rem;'>Nenhuma HU importada.</p>";
+    return;
+  }
+  list.innerHTML = husImportadas.map((hu, idx) => {
+    const statusClass = `status-${normalizarStatus(hu.status)}`;
+    const ativo = idx === huImportadaAtivaIdx ? "active" : "";
+    return `
+      <div class="hu-card ${ativo}" data-idx="${idx}">
+        <div class="hu-card-header">
+          <span class="hu-codigo">#${hu.codigo || "—"}</span>
+          ${hu.status ? `<span class="hu-status ${statusClass}">${hu.status}</span>` : ""}
+        </div>
+        <div class="hu-card-title">${hu.resumo || "(sem resumo)"}</div>
+        <div class="hu-card-meta">${hu.projeto || "—"}${hu.sprint ? " • Sprint " + hu.sprint : ""}</div>
+        ${hu._planoGerado ? '<span class="hu-card-flag">✓ Plano gerado</span>' : ""}
+      </div>
+    `;
+  }).join("");
+
+  list.querySelectorAll(".hu-card").forEach(el => {
+    el.addEventListener("click", () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      selecionarHUImportada(idx);
+    });
+  });
+}
+
+async function selecionarHUImportada(idx) {
+  const hu = husImportadas[idx];
+  if (!hu) return;
+
+  huImportadaAtivaIdx = idx;
+  renderizarSidebarHUs();
+
+  document.getElementById("projetoInput").value = hu.projeto || "";
+  document.getElementById("sprintInput").value = hu.sprint || "";
+  document.getElementById("telaInput").value = hu.resumo || "";
+  document.getElementById("huInput").value = hu.descricao || "";
+
+  // Defaults para campos não presentes no JSON importado
+  document.getElementById("tipoSistema").value = "web";
+  document.getElementById("criticidade").value = "media";
+
+  const ok = await executarAnaliseHU({ skipSupabase: true });
+  if (ok) {
+    hu._planoGerado = true;
+    renderizarSidebarHUs();
+  }
+}
+
+document.getElementById("btnImportarHUs").addEventListener("click", () => {
+  document.getElementById("fileImportHU").click();
+});
+
+document.getElementById("fileImportHU").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!Array.isArray(data)) {
+      throw new Error("JSON deve ser um array de HUs.");
+    }
+
+    husImportadas = data.map(item => ({
+      codigo: item["Código"] ?? item.codigo ?? item.code,
+      resumo: item["Resumo"] ?? item.resumo ?? item.title ?? "",
+      descricao: item["Descrição"] ?? item.descricao ?? item.description ?? item.hu ?? "",
+      projeto: item["Projeto"] ?? item.projeto ?? item.project ?? "",
+      sprint: item["Sprint"] ?? item.sprint ?? "",
+      status: item["Status"] ?? item.status ?? "",
+      categoria: item["Categoria"] ?? item.categoria ?? "",
+      _planoGerado: false
+    })).filter(h => h.descricao && h.descricao.length >= 20);
+
+    if (husImportadas.length === 0) {
+      toast("Nenhuma HU válida encontrada (campo Descrição obrigatório, mín. 20 chars).", "error");
+      return;
+    }
+
+    huImportadaAtivaIdx = -1;
+    renderizarSidebarHUs();
+    document.body.classList.add("has-hu-sidebar");
+    document.getElementById("huSidebar").style.display = "block";
+    toast(`📥 ${husImportadas.length} HUs importadas. Clique em uma para gerar o plano.`);
+  } catch (err) {
+    toast(`Erro ao importar JSON: ${err.message}`, "error");
+  }
+});
+
+document.getElementById("btnFecharSidebar").addEventListener("click", () => {
+  if (husImportadas.length > 0 && !confirm("Fechar a lista e descartar as HUs importadas?")) return;
+  husImportadas = [];
+  huImportadaAtivaIdx = -1;
+  document.body.classList.remove("has-hu-sidebar");
+  document.getElementById("huSidebar").style.display = "none";
 });
 
 // Inicialização
