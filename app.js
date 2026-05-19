@@ -25,8 +25,7 @@ const AI_MODELS = {
   gemini: [
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (recomendado - rápido/grátis)" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro (máxima qualidade)" },
-    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash (legado)" },
-    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro (legado)" }
+    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash (fallback estável)" }
   ]
 };
 

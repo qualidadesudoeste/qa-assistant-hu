@@ -208,10 +208,11 @@ async function callGemini({ apiKey, model, userPrompt }) {
 
   const requestedModel = model || "gemini-2.5-flash";
 
-  // Cadeia de fallback: modelo escolhido → 2.5-flash → 1.5-flash.
+  // Cadeia de fallback: modelo escolhido → 2.5-flash → 2.0-flash.
   // Em caso de 503 (sobrecarga) ou 429 (quota), tenta o próximo automaticamente.
+  // Evita modelos 1.5 que estão sendo deprecados para keys novas.
   const fallbackChain = [requestedModel];
-  for (const alt of ["gemini-2.5-flash", "gemini-1.5-flash"]) {
+  for (const alt of ["gemini-2.5-flash", "gemini-2.0-flash"]) {
     if (!fallbackChain.includes(alt)) fallbackChain.push(alt);
   }
 
