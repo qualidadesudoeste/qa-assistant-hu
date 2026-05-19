@@ -64,7 +64,7 @@ Agora produza a análise aprofundada em JSON conforme estrutura obrigatória.`;
 
 // --- RETRY COM BACKOFF EXPONENCIAL ---
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504, 529]);
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 4;
 
 async function fetchWithRetry(url, options, providerName) {
   let lastError;
@@ -80,12 +80,13 @@ async function fetchWithRetry(url, options, providerName) {
         throw err;
       }
       lastError = new Error(`${providerName} ${response.status}`);
+      lastError.status = response.status;
     } catch (err) {
       if (err.status && !RETRYABLE_STATUS.has(err.status)) throw err;
       lastError = err;
       if (attempt === MAX_RETRIES - 1) throw err;
     }
-    const delay = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
+    const delay = 1500 * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
     await new Promise(r => setTimeout(r, delay));
   }
   throw lastError;
@@ -134,9 +135,20 @@ async function callOpenAI({ apiKey, model, userPrompt }) {
 }
 
 // --- NOVO PROVEDOR: GEMINI ---
-async function callGemini({ apiKey, model, userPrompt }) {
-  const modelName = model || "gemini-2.5-flash";
+async function callGeminiOnce(apiKey, modelName, userPrompt) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+  const generationConfig = {
+    temperature: 0.4,
+    responseMimeType: "application/json",
+    maxOutputTokens: 16384
+  };
+
+  // Modelos 2.5 têm "thinking" ativado por padrão e consomem maxOutputTokens.
+  // Desabilita para que todo o orçamento seja usado na resposta JSON.
+  if (modelName.startsWith("gemini-2.5")) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
 
   const response = await fetchWithRetry(url, {
     method: "POST",
@@ -151,24 +163,80 @@ async function callGemini({ apiKey, model, userPrompt }) {
           parts: [{ text: userPrompt }]
         }
       ],
-      generationConfig: {
-        temperature: 0.4,
-        responseMimeType: "application/json",
-        maxOutputTokens: 2048
-      }
+      generationConfig
     })
   }, "Gemini");
 
   const data = await response.json();
   const texto = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  const finishReason = data.candidates?.[0]?.finishReason;
+  const blockReason = data.promptFeedback?.blockReason;
+
+  if (!texto) {
+    throw new Error(
+      `Gemini retornou resposta vazia (finishReason: ${finishReason || "n/a"}${blockReason ? ", blockReason: " + blockReason : ""}). ` +
+      `Tente reduzir o tamanho da HU ou trocar o modelo.`
+    );
+  }
+
+  if (finishReason === "MAX_TOKENS") {
+    throw new Error(
+      `Gemini truncou a resposta (atingiu maxOutputTokens). ` +
+      `Use um modelo com mais capacidade (ex: gemini-2.5-pro) ou reduza a quantidade de casos existentes enviados.`
+    );
+  }
 
   return {
     texto,
     usage: {
       prompt_tokens: data.usageMetadata?.promptTokenCount,
       completion_tokens: data.usageMetadata?.candidatesTokenCount
-    }
+    },
+    modelUsed: modelName
   };
+}
+
+async function callGemini({ apiKey, model, userPrompt }) {
+  if (!apiKey.startsWith("AIza")) {
+    const err = new Error(
+      "API key do Gemini inválida: deve começar com \"AIza\". " +
+      "Gere uma key em https://aistudio.google.com/apikey (não use access token OAuth)."
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  const requestedModel = model || "gemini-2.5-flash";
+
+  // Cadeia de fallback: modelo escolhido → 2.5-flash → 1.5-flash.
+  // Em caso de 503 (sobrecarga) ou 429 (quota), tenta o próximo automaticamente.
+  const fallbackChain = [requestedModel];
+  for (const alt of ["gemini-2.5-flash", "gemini-1.5-flash"]) {
+    if (!fallbackChain.includes(alt)) fallbackChain.push(alt);
+  }
+
+  let lastError;
+  for (let i = 0; i < fallbackChain.length; i++) {
+    const modelName = fallbackChain[i];
+    try {
+      return await callGeminiOnce(apiKey, modelName, userPrompt);
+    } catch (err) {
+      lastError = err;
+      const isOverloaded = err.status === 503 || err.status === 429;
+      const isLast = i === fallbackChain.length - 1;
+      if (!isOverloaded || isLast) {
+        if (isOverloaded && isLast) {
+          throw new Error(
+            `Todos os modelos Gemini estão sobrecarregados no momento (${fallbackChain.join(", ")}). ` +
+            `Tente novamente em alguns minutos ou troque para Anthropic/OpenAI nas Configurações.`
+          );
+        }
+        throw err;
+      }
+      console.warn(`[gemini] ${modelName} indisponível (${err.status}), tentando ${fallbackChain[i + 1]}...`);
+    }
+  }
+  throw lastError;
 }
 
 // --- UTILITÁRIOS ---
@@ -184,7 +252,10 @@ function extractJSON(texto) {
     const candidate = trimmed.substring(firstBrace, lastBrace + 1);
     try { return JSON.parse(candidate); } catch (_) {}
   }
-  throw new Error("Resposta da IA não é JSON válido.");
+  const preview = trimmed.length > 200
+    ? trimmed.slice(0, 100) + " […] " + trimmed.slice(-100)
+    : trimmed;
+  throw new Error(`Resposta da IA não é JSON válido. Início/fim do texto: ${preview}`);
 }
 
 // --- HANDLER PRINCIPAL ---
@@ -262,13 +333,14 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       provider: chosenProvider,
-      model,
+      model: result.modelUsed || model,
       usage: result.usage,
       analise: extractJSON(result.texto)
     });
 
   } catch (err) {
     console.error("[ai-analyze] erro:", err);
-    return res.status(500).json({ ok: false, error: err.message });
+    const status = (err.status && err.status >= 400 && err.status < 600) ? err.status : 500;
+    return res.status(status).json({ ok: false, error: err.message });
   }
 }
