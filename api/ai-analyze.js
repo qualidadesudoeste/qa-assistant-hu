@@ -1,7 +1,7 @@
 // Serverless Function (Vercel) - Proxy para análise com IA
 // Suporta Anthropic Claude, OpenAI GPT e Google Gemini
 
-const SYSTEM_PROMPT = `Você é um QA Sênior especialista em testes manuais de software, com décadas de experiência em sistemas críticos.
+const SYSTEM_PROMPT = `Você é um especialista em Heurísticas de Testes de Software, com domínio profundo de testes manuais em sistemas críticos.
 
 Sua tarefa é analisar uma História de Usuário (HU) e, considerando casos de teste já gerados por um motor de regras baseado em palavras-chave, produzir uma análise aprofundada que CAPTURE o que o motor de regras não consegue ver.
 

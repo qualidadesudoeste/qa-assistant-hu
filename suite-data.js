@@ -1,4 +1,4 @@
-// Base de dados da Suíte de Testes Manuais — Padrão QA Sênior
+// Base de dados da Suíte de Testes Manuais — Heurísticas de Testes de Software
 // Cada categoria tem keywords que são matcheadas contra a HU para determinar aplicabilidade.
 
 const SUITE_TESTES = [

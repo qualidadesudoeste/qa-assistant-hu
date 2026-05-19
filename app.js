@@ -1069,7 +1069,7 @@ function renderizarCobertura(riscos, cobertura) {
     </div>
 
     <div class="coverage-card">
-      <h3>💡 Recomendações do QA Sênior</h3>
+      <h3>💡 Recomendações Baseadas em Heurísticas de Testes de Software</h3>
       <ul style="padding-left: 1.5rem; color: var(--text);">
         <li>Realize <strong>sessão exploratória de 60-90min</strong> após os testes roteirizados.</li>
         <li>Teste com <strong>perfis diferentes</strong> (admin, usuário comum, convidado).</li>
