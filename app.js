@@ -1290,7 +1290,17 @@ async function executarAnaliseHU({ skipSupabase = false } = {}) {
       }
     }
 
-    ultimoResultado = { hu, tela, projeto, sprint, tipoSistema, criticidade, huParseada, categorias, casos, riscos, cobertura, analiseIA };
+    // Pré-monta cenários BDD prontos para integração com PlanEvidencies.
+    const casosIA = analiseIA?.casosAdicionais || [];
+    const scenariosBdd = [...casos, ...casosIA].map(c => ({
+      id: gerarId(),
+      title: c.titulo || "",
+      bdd: casoParaBDD(c),
+      evidence: "",
+      images: []
+    }));
+
+    ultimoResultado = { hu, tela, projeto, sprint, tipoSistema, criticidade, huParseada, categorias, casos, riscos, cobertura, analiseIA, scenariosBdd };
 
     statusCasos = {};
     planoAtualId = null;
@@ -1299,7 +1309,7 @@ async function executarAnaliseHU({ skipSupabase = false } = {}) {
         btn.innerHTML = '<span class="spinner"></span> Salvando plano...';
         const plano = await window.SupaAPI.upsertPlano({
           projeto, sprint, tela, hu, tipoSistema, criticidade,
-          resultado: { casos, riscos, cobertura, categorias, analiseIA, huParseada }
+          resultado: { casos, riscos, cobertura, categorias, analiseIA, huParseada, scenarios_bdd: scenariosBdd }
         });
         planoAtualId = plano.id;
         const { execucoes } = await window.SupaAPI.carregarPlano(plano.id);
@@ -1440,22 +1450,24 @@ function gerarId() {
 document.getElementById("btnExportarJSON").addEventListener("click", () => {
   if (!ultimoResultado) return;
 
-  const casosMotor = ultimoResultado.casos || [];
-  const casosIA = ultimoResultado.analiseIA?.casosAdicionais || [];
-  const todos = [...casosMotor, ...casosIA];
+  // Reaproveita scenariosBdd já montados em executarAnaliseHU (mesmos IDs salvos no Supabase).
+  let scenarios = ultimoResultado.scenariosBdd;
+  if (!scenarios) {
+    const casosMotor = ultimoResultado.casos || [];
+    const casosIA = ultimoResultado.analiseIA?.casosAdicionais || [];
+    scenarios = [...casosMotor, ...casosIA].map(c => ({
+      id: gerarId(),
+      title: c.titulo || "",
+      bdd: casoParaBDD(c),
+      evidence: "",
+      images: []
+    }));
+  }
 
-  if (todos.length === 0) {
+  if (scenarios.length === 0) {
     toast("Nenhum caso de teste para exportar.", "error");
     return;
   }
-
-  const scenarios = todos.map(c => ({
-    id: gerarId(),
-    title: c.titulo || "",
-    bdd: casoParaBDD(c),
-    evidence: "",
-    images: []
-  }));
 
   const payload = {
     projectName: "",
@@ -1759,7 +1771,7 @@ document.getElementById("fileImportHU").addEventListener("change", async (e) => 
     document.getElementById("criticidade").value = "media";
 
     toast(`📥 ${cards.length} HUs consolidadas. Gerando plano único...`);
-    await executarAnaliseHU({ skipSupabase: true });
+    await executarAnaliseHU();
   } catch (err) {
     toast(`Erro ao importar JSON: ${err.message}`, "error");
   }
