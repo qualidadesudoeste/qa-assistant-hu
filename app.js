@@ -1221,7 +1221,7 @@ function renderizarCasosIA(analise) {
   `;
 
   if (analise.casosAdicionais?.length) {
-    html += `<h3 style="margin: 1.5rem 0 1rem; color: #c084fc;">✨ Casos Adicionais Sugeridos pela IA (${analise.casosAdicionais.length})</h3>`;
+    html += `<h3 style="margin: 1.5rem 0 1rem; color: var(--color5);">✨ Casos Adicionais Sugeridos pela IA (${analise.casosAdicionais.length})</h3>`;
     html += analise.casosAdicionais.map(c => {
       const extra = c.justificativa ? `
         <div class="test-case-section">
