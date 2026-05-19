@@ -1407,6 +1407,73 @@ document.getElementById("btnExportar").addEventListener("click", () => {
   toast("💾 Arquivo .md baixado!");
 });
 
+// ---------- Export JSON em formato BDD (para app de evidências) ----------
+function casoParaBDD(caso) {
+  const linhas = [];
+  const pre = (caso.preCondicoes || []).filter(Boolean);
+  const passos = (caso.passos || []).filter(Boolean);
+
+  pre.forEach((p, i) => {
+    linhas.push(i === 0 ? `Dado que ${p}` : `E ${p}`);
+  });
+  passos.forEach((p, i) => {
+    linhas.push(i === 0 ? `Quando ${p}` : `E ${p}`);
+  });
+  if (caso.resultadoEsperado) {
+    linhas.push(`Então ${caso.resultadoEsperado}`);
+  }
+  return linhas.join("\n");
+}
+
+function gerarId() {
+  if (window.crypto?.randomUUID) return crypto.randomUUID();
+  return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+document.getElementById("btnExportarJSON").addEventListener("click", () => {
+  if (!ultimoResultado) return;
+
+  const casosMotor = ultimoResultado.casos || [];
+  const casosIA = ultimoResultado.analiseIA?.casosAdicionais || [];
+  const todos = [...casosMotor, ...casosIA];
+
+  if (todos.length === 0) {
+    toast("Nenhum caso de teste para exportar.", "error");
+    return;
+  }
+
+  const scenarios = todos.map(c => ({
+    id: gerarId(),
+    title: c.titulo || "",
+    bdd: casoParaBDD(c),
+    evidence: "",
+    images: []
+  }));
+
+  const payload = {
+    projectName: "",
+    sprintName: "",
+    version: "",
+    redator: "",
+    clientName: "",
+    sprintObjective: "",
+    testScope: "",
+    scenarios
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const nomeArquivo = `cenarios-bdd-${(ultimoResultado.tela || "hu").replace(/\s+/g, "-").toLowerCase()}.json`;
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast(`📤 ${scenarios.length} cenários BDD exportados!`);
+});
+
 // Tabs
 document.querySelectorAll(".tab").forEach(tab => {
   tab.addEventListener("click", () => {
