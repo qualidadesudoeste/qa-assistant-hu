@@ -31,10 +31,12 @@
         <h2>📝 História de Usuário (HU)</h2>
         <div class="result-actions">
           <button class="btn-ghost" id="btnImportarHUs" title="Importar várias HUs de um JSON">📥 Importar JSON</button>
+          <button class="btn-ghost" id="btnImportarDoc" title="Importar HUs a partir de arquivos .pdf ou .docx">📄 Importar PDF/DOCX</button>
           <button class="btn-ghost" id="btnExample">Carregar Exemplo</button>
         </div>
       </div>
       <input type="file" id="fileImportHU" accept="application/json" style="display: none;" />
+      <input type="file" id="fileImportDoc" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple style="display: none;" />
 
       <div class="form-row">
         <div class="form-group">
@@ -45,11 +47,6 @@
           <label for="sprintInput">Sprint</label>
           <input type="text" id="sprintInput" placeholder="Ex: Sprint 42, 2026-Q2-S3..." />
         </div>
-      </div>
-
-      <div class="form-group">
-        <label for="telaInput">Nome da Tela / Funcionalidade</label>
-        <input type="text" id="telaInput" placeholder="Ex: Tela de Login, Checkout, Cadastro de Produto..." />
       </div>
 
       <div class="form-group" id="retomarPlanoWrapper" style="display: none;">
@@ -119,6 +116,7 @@
           <button class="btn-ghost" id="btnCopiar">📋 Copiar</button>
           <button class="btn-ghost" id="btnExportar">💾 Exportar .md</button>
           <button class="btn-ghost" id="btnExportarJSON">📤 Exportar JSON (BDD)</button>
+          <button class="btn-ghost" id="btnExportarTemplate" title="Exportar no formato template (cards #Código com Caminho, Descrição e Cenários BDD)">📄 Exportar Template SIG</button>
         </div>
       </div>
 

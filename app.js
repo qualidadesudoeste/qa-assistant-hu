@@ -224,11 +224,10 @@ function gerarCasosDeTeste(hu, tela, tipoSistema, huParseada) {
     tipo: "Funcional",
     preCondicoes: [
       huParseada.papel ? `Estar logado como ${huParseada.papel}` : "Estar autenticado no sistema",
-      `Acessar a tela: ${tela || "tela da funcionalidade"}`,
+      "Estar na funcionalidade descrita na HU",
       "Ter permissão adequada para a ação"
     ],
     passos: [
-      `Acessar a tela "${tela || "da funcionalidade"}"`,
       `Executar a ação: ${huParseada.acao || "conforme descrito na HU"}`,
       "Preencher todos os campos obrigatórios com dados válidos",
       "Confirmar/submeter a ação"
@@ -645,7 +644,8 @@ function gerarCasosDeTeste(hu, tela, tipoSistema, huParseada) {
 
 function gerarPrefixoTela(tela) {
   if (!tela) return "CT";
-  const palavras = tela.trim().split(/\s+/);
+  const palavras = tela.trim().split(/\s+/).filter(p => /^[A-Za-zÀ-ÿ]/.test(p));
+  if (palavras.length === 0) return "CT";
   if (palavras.length === 1) return palavras[0].substring(0, 3).toUpperCase();
   return palavras.map(p => p[0]).join("").toUpperCase().substring(0, 4);
 }
@@ -719,7 +719,6 @@ function renderizarResumo(hu, tela, tipoSistema, criticidade, huParseada, catego
   const el = document.getElementById("resumoHU");
   el.innerHTML = `
     <h3>📌 HU Analisada</h3>
-    <p><strong>Tela:</strong> ${tela || "(não informada)"}</p>
     ${huParseada.papel ? `<p><strong>Papel:</strong> ${huParseada.papel}</p>` : ""}
     ${huParseada.acao ? `<p><strong>Ação:</strong> ${huParseada.acao}</p>` : ""}
     ${huParseada.beneficio ? `<p><strong>Benefício:</strong> ${huParseada.beneficio}</p>` : ""}
@@ -742,9 +741,10 @@ function hashString(s) {
 }
 
 function getProgressKey() {
-  const tela = document.getElementById("telaInput")?.value?.trim() || "sem-tela";
+  const projeto = document.getElementById("projetoInput")?.value?.trim() || "";
+  const sprint = document.getElementById("sprintInput")?.value?.trim() || "";
   const hu = document.getElementById("huInput")?.value?.trim() || "";
-  return "qa-progress-" + hashString(tela + "|" + hu.substring(0, 200));
+  return "qa-progress-" + hashString(projeto + "|" + sprint + "|" + hu.substring(0, 200));
 }
 
 function carregarProgresso() {
@@ -1246,14 +1246,19 @@ function renderizarCasosIA(analise) {
 }
 
 // ---------- Análise (extraída para reuso entre botão e batch import) ----------
-async function executarAnaliseHU({ skipSupabase = false } = {}) {
+async function executarAnaliseHU({ skipSupabase = false, cardsSig = null } = {}) {
   const hu = document.getElementById("huInput").value.trim();
-  const tela = document.getElementById("telaInput").value.trim();
   const projeto = document.getElementById("projetoInput").value.trim();
   const sprint = document.getElementById("sprintInput").value.trim();
   const tipoSistema = document.getElementById("tipoSistema").value;
   const criticidade = document.getElementById("criticidade").value;
   const useAI = document.getElementById("useAI").checked;
+
+  // "tela" agora é um rótulo derivado (usado só pra listagem no Supabase e título do plano).
+  // Não aparece em pré-condições nem passos de casos de teste.
+  const tela = cardsSig && cardsSig.length
+    ? `Plano SIG — ${cardsSig.length} HU${cardsSig.length > 1 ? "s" : ""}`
+    : (projeto && sprint ? `${projeto} / Sprint ${sprint}` : projeto || sprint || "Plano de Testes");
 
   if (!hu || hu.length < 20) {
     toast("Por favor, insira uma HU com pelo menos 20 caracteres.", "error");
@@ -1272,8 +1277,13 @@ async function executarAnaliseHU({ skipSupabase = false } = {}) {
     btn.innerHTML = '<span class="spinner"></span> Analisando...';
 
     const huParseada = parsearHU(hu);
-    const categorias = selecionarCategoriasAplicaveis(hu, tela, tipoSistema);
-    const casos = gerarCasosDeTeste(hu, tela, tipoSistema, huParseada);
+
+    // Modo SIG: usa cenários do JSON importado como casos, ignora gerador genérico e suíte.
+    const modoSig = cardsSig && cardsSig.length > 0 && cardsSig.some(c => c.cenarios && c.cenarios.length);
+    const categorias = modoSig ? [] : selecionarCategoriasAplicaveis(hu, tela, tipoSistema);
+    const casos = modoSig
+      ? gerarCasosDeCardsSig(cardsSig)
+      : gerarCasosDeTeste(hu, tela, tipoSistema, huParseada);
     const { riscos, cobertura } = analisarCoberturaRiscos(hu, tela, tipoSistema, categorias, casos);
 
     let analiseIA = null;
@@ -1300,7 +1310,7 @@ async function executarAnaliseHU({ skipSupabase = false } = {}) {
       images: []
     }));
 
-    ultimoResultado = { hu, tela, projeto, sprint, tipoSistema, criticidade, huParseada, categorias, casos, riscos, cobertura, analiseIA, scenariosBdd };
+    ultimoResultado = { hu, tela, projeto, sprint, tipoSistema, criticidade, huParseada, categorias, casos, riscos, cobertura, analiseIA, scenariosBdd, cardsSig };
 
     statusCasos = {};
     planoAtualId = null;
@@ -1309,7 +1319,7 @@ async function executarAnaliseHU({ skipSupabase = false } = {}) {
         btn.innerHTML = '<span class="spinner"></span> Salvando plano...';
         const plano = await window.SupaAPI.upsertPlano({
           projeto, sprint, tela, hu, tipoSistema, criticidade,
-          resultado: { casos, riscos, cobertura, categorias, analiseIA, huParseada, scenarios_bdd: scenariosBdd }
+          resultado: { casos, riscos, cobertura, categorias, analiseIA, huParseada, scenarios_bdd: scenariosBdd, cardsSig }
         });
         planoAtualId = plano.id;
         const { execucoes } = await window.SupaAPI.carregarPlano(plano.id);
@@ -1353,7 +1363,6 @@ document.getElementById("btnAnalisar").addEventListener("click", () => executarA
 
 document.getElementById("btnLimpar").addEventListener("click", () => {
   document.getElementById("huInput").value = "";
-  document.getElementById("telaInput").value = "";
   document.getElementById("projetoInput").value = "";
   document.getElementById("sprintInput").value = "";
   document.getElementById("resultsPanel").style.display = "none";
@@ -1364,7 +1373,6 @@ document.getElementById("btnLimpar").addEventListener("click", () => {
 });
 
 document.getElementById("btnExample").addEventListener("click", () => {
-  document.getElementById("telaInput").value = "Tela de Login";
   document.getElementById("huInput").value = `Como usuário cadastrado no sistema,
 Eu quero fazer login com meu e-mail e senha,
 Para que eu possa acessar minha área restrita e gerenciar meus pedidos.
@@ -1414,7 +1422,7 @@ document.getElementById("btnExportar").addEventListener("click", () => {
   const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const nomeArquivo = `plano-testes-${(ultimoResultado.tela || "hu").replace(/\s+/g, "-").toLowerCase()}.md`;
+  const nomeArquivo = `plano-testes-${(ultimoResultado.tela || "hu").replace(/[^\w\d]+/g, "-").toLowerCase()}.md`;
   a.href = url;
   a.download = nomeArquivo;
   document.body.appendChild(a);
@@ -1483,7 +1491,7 @@ document.getElementById("btnExportarJSON").addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const nomeArquivo = `cenarios-bdd-${(ultimoResultado.tela || "hu").replace(/\s+/g, "-").toLowerCase()}.json`;
+  const nomeArquivo = `cenarios-bdd-${(ultimoResultado.tela || "hu").replace(/[^\w\d]+/g, "-").toLowerCase()}.json`;
   a.href = url;
   a.download = nomeArquivo;
   document.body.appendChild(a);
@@ -1491,6 +1499,28 @@ document.getElementById("btnExportarJSON").addEventListener("click", () => {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast(`📤 ${scenarios.length} cenários BDD exportados!`);
+});
+
+document.getElementById("btnExportarTemplate").addEventListener("click", () => {
+  if (!ultimoResultado || !ultimoResultado.cardsSig || ultimoResultado.cardsSig.length === 0) {
+    toast("Importe um JSON do SIG primeiro (com cenários QA) para gerar o template.", "error");
+    return;
+  }
+  const md = gerarMarkdownTemplate(ultimoResultado.cardsSig, {
+    projeto: ultimoResultado.projeto,
+    sprint: ultimoResultado.sprint
+  });
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const nome = `plano-template-${(ultimoResultado.sprint || "sig").replace(/\s+/g, "-").toLowerCase()}.md`;
+  a.href = url;
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast("📄 Template SIG exportado!");
 });
 
 // Tabs
@@ -1659,7 +1689,6 @@ async function retomarPlanoSalvo(planId) {
 
     document.getElementById("projetoInput").value = plano.projeto || "";
     document.getElementById("sprintInput").value = plano.sprint || "";
-    document.getElementById("telaInput").value = plano.tela || "";
     document.getElementById("huInput").value = plano.hu || "";
     document.getElementById("tipoSistema").value = plano.tipo_sistema || "web";
     document.getElementById("criticidade").value = plano.criticidade || "media";
@@ -1682,7 +1711,8 @@ async function retomarPlanoSalvo(planId) {
       casos: r.casos || [],
       riscos: r.riscos || [],
       cobertura: r.cobertura || { casosGerados: 0, tiposCobertos: [] },
-      analiseIA: r.analiseIA || null
+      analiseIA: r.analiseIA || null,
+      cardsSig: r.cardsSig || null
     };
 
     renderizarResumo(plano.hu, plano.tela, plano.tipo_sistema, plano.criticidade,
@@ -1721,18 +1751,515 @@ document.getElementById("btnHistoricoFechar")?.addEventListener("click", () => {
   document.getElementById("historicoModal").style.display = "none";
 });
 
-// ---------- Importação de múltiplas HUs via JSON (plano consolidado) ----------
-function montarHUConsolidada(cards) {
+// ---------- Importação de múltiplas HUs via JSON ----------
+// Parser de cards exportados do SIG (modo template)
+// Limpa emojis "mangled" (??, ???) que aparecem no JSON exportado e normaliza espaços.
+function limparTextoSig(s) {
+  if (!s) return "";
+  return s
+    .replace(/\?{2,}/g, ' ')
+    .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Extrai o caminho da tela do campo "Resumo" do card.
+// Ex: "HU.17.1 (4/4) - ALTERAÇÃO EM GESTÃO DE OS - PERMISSÃO CANCELAR OS" → "Menu > Gestão de OS"
+function extrairCaminhoDoResumo(resumo) {
+  const r = (resumo || "").trim();
+  if (!r) return "";
+  let m = r.match(/ALTERA[ÇC][ÃA]O\s+EM\s+(.+?)(?:\s*[-–]\s|$)/i);
+  if (m) return `Menu > ${m[1].trim()}`;
+  m = r.match(/^TELA\s+DE\s+(.+?)(?:\s*[-–]|$)/i);
+  if (m) return `Tela de ${m[1].trim()}`;
+  m = r.match(/^(?:HU\.[\d.]+(?:\s*\([^)]*\))?\s*[-–]\s*)?(.+)$/i);
+  if (m) return `Menu > ${m[1].trim()}`;
+  return `Menu > ${r}`;
+}
+
+// Faz parsing dos blocos "Cenário N: Título Dado que ... Quando ... Então ..."
+function extrairCenariosQA(textoCenariosQA) {
+  const cenarios = [];
+  if (!textoCenariosQA) return cenarios;
+  const regex = /Cen[áa]rio\s+(\d+):\s*([\s\S]+?)(?=Cen[áa]rio\s+\d+:|$)/gi;
+  let m;
+  while ((m = regex.exec(textoCenariosQA)) !== null) {
+    const numero = m[1];
+    const bloco = m[2].trim();
+    const dadoIdx = bloco.search(/\bDado\s+que\b/i);
+    const quandoIdx = bloco.search(/\bQuando\b/i);
+    const entaoIdx = bloco.search(/\bEnt[aã]o\b/i);
+    if (dadoIdx < 0 || quandoIdx < 0 || entaoIdx < 0) continue;
+    if (!(dadoIdx < quandoIdx && quandoIdx < entaoIdx)) continue;
+
+    const titulo = bloco.substring(0, dadoIdx).replace(/[\s.,;:]+$/, '').trim();
+    const dado = bloco.substring(dadoIdx, quandoIdx)
+      .replace(/^Dado\s+que\s*/i, '').replace(/[\s,;]+$/, '').trim();
+    const quando = bloco.substring(quandoIdx, entaoIdx)
+      .replace(/^Quando\s*/i, '').replace(/[\s,;]+$/, '').trim();
+    const entao = bloco.substring(entaoIdx)
+      .replace(/^Ent[aã]o\s*/i, '').replace(/[\s.]+$/, '').trim();
+
+    cenarios.push({ numero, titulo, dado, quando, entao });
+  }
+  return cenarios;
+}
+
+// Extrai descrição inicial (MAPEAMENTO DE CAMADAS) e Cenários (CENÁRIOS DE TESTE QA).
+// Ignora intencionalmente: TAREFAS DE DESENVOLVIMENTO (solução técnica) e NOTAS DE IMPLEMENTAÇÃO (boas práticas).
+function extrairSecoesCardSig(descricao) {
+  const desc = limparTextoSig(descricao);
+
+  const idxIntro = desc.search(/MAPEAMENTO\s+DE\s+CAMADAS/i);
+  const idxTarefas = desc.search(/TAREFAS\s+DE\s+DESENVOLVIMENTO/i);
+  const idxCenarios = desc.search(/CEN[ÁA]RIOS?\s+DE\s+TESTE/i);
+  const idxNotas = desc.search(/NOTAS\s+DE\s+IMPLEMENTA[ÇC][ÃA]O/i);
+
+  let descricaoInicial = "";
+  if (idxIntro >= 0) {
+    const fim = idxTarefas >= 0 ? idxTarefas
+              : idxCenarios >= 0 ? idxCenarios
+              : desc.length;
+    descricaoInicial = desc.substring(idxIntro, fim)
+      .replace(/^MAPEAMENTO\s+DE\s+CAMADAS\s*/i, '')
+      .trim();
+  } else if (idxTarefas >= 0 || idxCenarios >= 0) {
+    const fim = idxTarefas >= 0 ? idxTarefas : idxCenarios;
+    let inicio = 0;
+    const decompIdx = desc.search(/DECOMPOSI[ÇC][ÃA]O\s+T[ÉE]CNICA:/i);
+    if (decompIdx >= 0) {
+      const colon = desc.indexOf(':', decompIdx);
+      if (colon >= 0) inicio = colon + 1;
+    }
+    descricaoInicial = desc.substring(inicio, fim).trim();
+  } else {
+    descricaoInicial = desc;
+  }
+
+  let textoCenarios = "";
+  if (idxCenarios >= 0) {
+    const fim = idxNotas >= 0 ? idxNotas : desc.length;
+    textoCenarios = desc.substring(idxCenarios, fim)
+      .replace(/^CEN[ÁA]RIOS?\s+DE\s+TESTE(?:\s*\([^)]*\))?\s*/i, '');
+  }
+
+  return { descricaoInicial, cenarios: extrairCenariosQA(textoCenarios) };
+}
+
+function parsearCardsSig(items) {
+  return items.map(item => {
+    const codigo = item["Código"] ?? item.codigo ?? item.code ?? "";
+    const resumo = item["Resumo"] ?? item.resumo ?? item.title ?? "";
+    const descricao = item["Descrição"] ?? item.descricao ?? item.description ?? item.hu ?? "";
+    const projeto = item["Projeto"] ?? item.projeto ?? item.project ?? "";
+    const sprint = item["Sprint"] ?? item.sprint ?? "";
+    const categoria = item["Categoria"] ?? item.categoria ?? "Melhoria";
+    const { descricaoInicial, cenarios } = extrairSecoesCardSig(descricao);
+    return {
+      codigo: String(codigo),
+      resumo,
+      projeto,
+      sprint,
+      categoria,
+      caminho: extrairCaminhoDoResumo(resumo),
+      descricaoInicial,
+      cenarios
+    };
+  }).filter(c => (c.descricaoInicial && c.descricaoInicial.length >= 20) || c.cenarios.length > 0);
+}
+
+// HU consolidada limpa: só descrição inicial + cenários, sem TAREFAS/NOTAS.
+function montarHUConsolidadaLimpa(cards) {
   const blocos = cards.map((c, i) => {
     const titulo = c.resumo || `HU ${i + 1}`;
-    const codigo = c.codigo ? `(Código ${c.codigo})` : "";
-    return `## HU ${i + 1}: ${titulo} ${codigo}\n\n${c.descricao}`;
+    const codigo = c.codigo ? ` (#${c.codigo})` : "";
+    let parts = [`## HU ${i + 1}: ${titulo}${codigo}`];
+    if (c.caminho) parts.push(`**Caminho:** ${c.caminho}`);
+    if (c.categoria) parts.push(`**Categoria:** ${c.categoria}`);
+    if (c.descricaoInicial) parts.push(`**Descrição:** ${c.descricaoInicial}`);
+    if (c.cenarios && c.cenarios.length) {
+      const cenTxt = c.cenarios.map(cen =>
+        `- **Cenário ${cen.numero}: ${cen.titulo}**\n  - Dado que ${cen.dado}\n  - Quando ${cen.quando}\n  - Então ${cen.entao}`
+      ).join("\n");
+      parts.push(`**Critérios de Aceite:**\n${cenTxt}`);
+    }
+    return parts.join("\n\n");
   });
-  return `# Plano Consolidado — ${cards.length} HUs\n\n${blocos.join("\n\n---\n\n")}`;
+  return `# Plano Consolidado SIG — ${cards.length} HUs\n\n${blocos.join("\n\n---\n\n")}`;
+}
+
+// Converte cenários do JSON em casos de teste (formato do gerador atual).
+function gerarCasosDeCardsSig(cards) {
+  const casos = [];
+  cards.forEach(card => {
+    const cod = card.codigo || "SIG";
+    (card.cenarios || []).forEach(cen => {
+      casos.push({
+        id: `${cod}-CEN${cen.numero}`,
+        titulo: cen.titulo || `Cenário ${cen.numero}`,
+        prioridade: "alta",
+        tipo: `Cenário JSON #${cod}`,
+        preCondicoes: [cen.dado],
+        passos: [cen.quando],
+        resultadoEsperado: cen.entao,
+        dadosTeste: "Conforme cenário de aceite do card.",
+        sigCardCodigo: cod,
+        sigCardResumo: card.resumo,
+        sigCardCaminho: card.caminho,
+        sigCardCategoria: card.categoria
+      });
+    });
+  });
+  return casos;
+}
+
+// Exportação em formato template SIG (cards com #Código, Caminho, Categoria, Descrição, Cenários BDD).
+function gerarMarkdownTemplate(cardsSig, opts = {}) {
+  const projeto = opts.projeto || "";
+  const sprint = opts.sprint || "";
+  const data = new Date().toLocaleDateString("pt-BR");
+  const totalCen = cardsSig.reduce((acc, c) => acc + (c.cenarios?.length || 0), 0);
+
+  let md = `# 🧪 Plano de Testes — ${projeto}${sprint ? ` / Sprint ${sprint}` : ""}\n\n`;
+  md += `> **Gerado em:** ${data} • **HUs:** ${cardsSig.length} • **Cenários:** ${totalCen}\n\n---\n\n`;
+
+  cardsSig.forEach((card, idx) => {
+    const codigo = card.codigo || `HU${idx + 1}`;
+    const titulo = card.resumo || `HU ${idx + 1}`;
+
+    md += `## #${codigo} – ${titulo}\n\n`;
+    md += `**Caminho:** ${card.caminho || "(preencher)"}\n\n`;
+    md += `**Categoria:** ${card.categoria || "Melhoria"}\n\n`;
+    md += `**Descrição:** ${card.descricaoInicial || "(não informada)"}\n\n`;
+    md += `**Nível:** Alta Complexidade\n\n`;
+    md += `**Funcionalidade:** ${titulo}\n\n`;
+    md += `*Testes Críticos (Risco Alto)*\n\n`;
+
+    if (card.cenarios && card.cenarios.length) {
+      card.cenarios.forEach(cen => {
+        md += `### Cenário ${cen.numero}: ${cen.titulo}\n\n`;
+        md += `| | |\n|---|---|\n`;
+        md += `| **Dado** | que ${cen.dado} |\n`;
+        md += `| **Quando** | ${cen.quando} |\n`;
+        md += `| **Então** | ${cen.entao} |\n\n`;
+        md += `**Execução:** ☐ Aprovado &nbsp;&nbsp; ☐ Reprovado\n\n`;
+        md += `**Observações / Evidências:**\n\n\n`;
+      });
+    } else {
+      md += `_Nenhum cenário de aceite extraído deste card._\n\n`;
+    }
+
+    md += `---\n\n`;
+  });
+
+  return md;
 }
 
 document.getElementById("btnImportarHUs").addEventListener("click", () => {
   document.getElementById("fileImportHU").click();
+});
+
+// ---------- Importação de HU a partir de PDF/DOCX ----------
+function carregarScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[data-src="${src}"]`)) {
+      resolve();
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = src;
+    s.dataset.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Falha ao carregar " + src));
+    document.head.appendChild(s);
+  });
+}
+
+const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+const PDFJS_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+const JSZIP_URL = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+
+async function garantirPdfJs() {
+  if (window.pdfjsLib) return;
+  await carregarScript(PDFJS_URL);
+  if (!window.pdfjsLib) throw new Error("pdf.js não inicializou");
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+}
+
+async function garantirJSZip() {
+  if (window.JSZip) return;
+  await carregarScript(JSZIP_URL);
+  if (!window.JSZip) throw new Error("JSZip não inicializou");
+}
+
+async function extrairTextoPDF(file) {
+  await garantirPdfJs();
+  const buffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  const linhas = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    let ultimoY = null;
+    let buf = [];
+    for (const item of content.items) {
+      if (!item.str) continue;
+      const y = item.transform[5];
+      if (ultimoY !== null && Math.abs(y - ultimoY) > 3) {
+        const linha = buf.join("").trim();
+        if (linha) linhas.push(linha);
+        buf = [];
+      }
+      ultimoY = y;
+      buf.push(item.str);
+    }
+    if (buf.length) {
+      const linha = buf.join("").trim();
+      if (linha) linhas.push(linha);
+    }
+  }
+  return linhas.join("\n");
+}
+
+function decodeXmlEntities(s) {
+  return (s || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)));
+}
+
+async function extrairTextoDOCX(file) {
+  await garantirJSZip();
+  const buffer = await file.arrayBuffer();
+  const zip = await window.JSZip.loadAsync(buffer);
+  const docFile = zip.file("word/document.xml");
+  if (!docFile) throw new Error("DOCX inválido: word/document.xml não encontrado");
+  const xml = await docFile.async("string");
+  const linhas = [];
+  const paraRegex = /<w:p[ >][\s\S]*?<\/w:p>/g;
+  let paraMatch;
+  while ((paraMatch = paraRegex.exec(xml)) !== null) {
+    const textoRegex = /<w:t[^>]*>([^<]*)<\/w:t>/g;
+    const partes = [];
+    let textoMatch;
+    while ((textoMatch = textoRegex.exec(paraMatch[0])) !== null) {
+      partes.push(textoMatch[1]);
+    }
+    const linha = decodeXmlEntities(partes.join("")).trim();
+    if (linha) linhas.push(linha);
+  }
+  return linhas.join("\n");
+}
+
+// Parser de HU a partir de texto extraído (PDF ou DOCX).
+// Foca nos pontos essenciais: título/código, caminho, Como/quero/para, cenários.
+function parsearHUDeDocumento(textoBruto, fileName) {
+  const texto = textoBruto.replace(/ /g, " ");
+  const linhas = texto.split("\n").map(l => l.trim()).filter(Boolean);
+
+  // ----- Código + Resumo -----
+  let codigo = "", resumo = "";
+  const tituloRegex = /\bHU[\s.]?\s*(\d+(?:\.\d+)*)(?:\s*\([^)]*\))?\s*[-–]\s*([^\n[]+?)(?:\s*\[[^\]]+\])?\s*$/im;
+  for (const l of linhas.slice(0, 15)) {
+    const m = l.match(tituloRegex);
+    if (m) {
+      codigo = "HU." + m[1];
+      resumo = `${codigo} - ${m[2].trim()}`;
+      break;
+    }
+  }
+  if (!codigo) {
+    const base = (fileName || "documento").replace(/\.(pdf|docx)$/i, "").replace(/\s*\(\d+\)\s*$/, "").trim();
+    const m = base.match(/^HU[\s.]?\s*(\d+(?:\.\d+)*)\s*[-–]\s*(.+)$/i);
+    if (m) {
+      codigo = "HU." + m[1];
+      resumo = `${codigo} - ${m[2].trim()}`;
+    } else {
+      codigo = base.substring(0, 30) || "HU";
+      resumo = base;
+    }
+  }
+
+  // ----- Caminho no menu -----
+  let caminho = "";
+  const caminhoMatch = texto.match(/Caminho(?:\s+no\s+menu)?\s*:\s*([^\n]+)/i);
+  if (caminhoMatch) {
+    caminho = caminhoMatch[1].trim();
+    if (!/^Menu/i.test(caminho)) caminho = "Menu > " + caminho;
+  } else {
+    caminho = `Menu > ${resumo}`;
+  }
+
+  // ----- História de Usuário -----
+  let huPapel = "", huAcao = "", huBeneficio = "";
+  // Formato inline: "Como X, [eu] quero Y, [de modo que|para que|para] Z"
+  const huInline = texto.match(/Como\s+([^,\n]+?),?\s*(?:eu\s+)?quero\s+([^,\n]+?),?\s*(?:de\s+modo\s+que|para\s+que|para)\s+([^.\n]+)/i);
+  if (huInline) {
+    huPapel = huInline[1].trim();
+    huAcao = huInline[2].trim();
+    huBeneficio = huInline[3].trim();
+  } else {
+    // Formato DOCX em tabela: linhas COMO / EU QUERO / DE MODO QUE seguidas dos valores.
+    for (let i = 0; i < linhas.length - 5; i++) {
+      if (/^COMO$/i.test(linhas[i]) && /^EU\s+QUERO$/i.test(linhas[i+1]) && /^DE\s+MODO\s+QUE$/i.test(linhas[i+2])) {
+        huPapel = linhas[i+3] || "";
+        huAcao = linhas[i+4] || "";
+        huBeneficio = linhas[i+5] || "";
+        break;
+      }
+    }
+  }
+
+  // ----- Cenários -----
+  const cenarios = extrairCenariosDocumento(texto, linhas);
+
+  // ----- Descrição inicial (concisa, só essencial) -----
+  let descricaoInicial = "";
+  if (huPapel || huAcao || huBeneficio) {
+    descricaoInicial = `Como ${huPapel || "(papel)"}, quero ${huAcao || "(ação)"}, de modo que ${huBeneficio || "(benefício)"}.`;
+  } else {
+    descricaoInicial = resumo;
+  }
+
+  return {
+    codigo,
+    resumo,
+    projeto: "",
+    sprint: "",
+    categoria: "Melhoria",
+    caminho,
+    descricaoInicial,
+    cenarios
+  };
+}
+
+function extrairCenariosDocumento(texto, linhas) {
+  const cenarios = [];
+
+  // PDF / texto inline: "Cenário N. Título" seguido de "Dado que ... quando ... então ..."
+  const blocoCriterios = (() => {
+    const idx = texto.search(/COMPORTAMENTO\s+ESPERADO|CRIT[ÉE]RIOS\s+DE\s+ACEITA[ÇC][ÃA]O|CRIT[ÉE]RIOS\s+DE\s+ACEITE/i);
+    const fim = texto.search(/APROVA[ÇC][ÃA]O\s+DO\s+REQUISITO|ANEXOS\b/i);
+    return idx >= 0 ? texto.substring(idx, fim > idx ? fim : texto.length) : texto;
+  })();
+
+  const regexCenario = /Cen[áa]rio\s+(\d+)[\.\:]?\s*([^\n]+)\n([\s\S]+?)(?=Cen[áa]rio\s+\d+[\.\:]|APROVA[ÇC][ÃA]O|ANEXOS|$)/gi;
+  let m;
+  while ((m = regexCenario.exec(blocoCriterios)) !== null) {
+    const numero = m[1];
+    const titulo = (m[2] || "").replace(/[\s.,;:]+$/, "").trim();
+    const subCenarios = parsearDadoQuandoEntao(m[3]);
+    if (subCenarios.length === 1) {
+      cenarios.push({ numero, titulo, ...subCenarios[0] });
+    } else if (subCenarios.length > 1) {
+      subCenarios.forEach((c, i) => cenarios.push({
+        numero: `${numero}.${i + 1}`,
+        titulo: i === 0 ? titulo : `${titulo} — continuação`,
+        ...c
+      }));
+    }
+  }
+
+  // DOCX em tabela: padrão de linhas [título, "DADO QUE", "QUANDO", "ENTÃO", d, q, e]
+  if (cenarios.length === 0) {
+    let seq = 1;
+    for (let i = 0; i < linhas.length - 6; i++) {
+      if (/^DADO\s+QUE$/i.test(linhas[i]) && /^QUANDO$/i.test(linhas[i+1]) && /^ENT[ÃA]O$/i.test(linhas[i+2])) {
+        const titulo = (i > 0 ? linhas[i-1] : `Cenário ${seq}`).trim();
+        const dado = (linhas[i+3] || "").replace(/[,.\s]+$/, "").trim();
+        const quando = (linhas[i+4] || "").replace(/[,.\s]+$/, "").trim();
+        const entao = (linhas[i+5] || "").replace(/[\s.]+$/, "").trim();
+        if (dado && quando && entao) {
+          cenarios.push({ numero: String(seq++), titulo, dado, quando, entao });
+        }
+        i += 5;
+      }
+    }
+  }
+
+  return cenarios;
+}
+
+function parsearDadoQuandoEntao(bloco) {
+  // Cada "Dado que" inicia um sub-bloco; dentro dele podem haver vários
+  // "(E) quando ... então ..." que compartilham o mesmo Dado.
+  const subs = [];
+  const partes = bloco.split(/\bDado\s+que\s+/i);
+  for (let i = 1; i < partes.length; i++) {
+    const sec = partes[i];
+    const dadoEnd = sec.search(/(?:\bE\s+)?quando\s+/i);
+    if (dadoEnd < 0) continue;
+    const dado = limparTextoCenario(sec.substring(0, dadoEnd));
+    if (!dado) continue;
+
+    const resto = sec.substring(dadoEnd);
+    const qqRegex = /(?:\bE\s+)?quando\s+([\s\S]+?),?\s*ent[aã]o\s+([\s\S]+?)(?=\b(?:E\s+)?quando\s+|$)/gi;
+    let m;
+    while ((m = qqRegex.exec(resto)) !== null) {
+      const quando = limparTextoCenario(m[1]);
+      const entao = limparTextoCenario(m[2]);
+      if (quando && entao) subs.push({ dado, quando, entao });
+    }
+  }
+  return subs;
+}
+
+function limparTextoCenario(s) {
+  return (s || "")
+    .replace(/[●○•]\s*/g, "")
+    .replace(/\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,;.]+|[\s,;.]+$/g, "")
+    .trim();
+}
+
+document.getElementById("btnImportarDoc").addEventListener("click", () => {
+  document.getElementById("fileImportDoc").click();
+});
+
+document.getElementById("fileImportDoc").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";
+  if (!files.length) return;
+
+  try {
+    toast(`📄 Lendo ${files.length} arquivo${files.length > 1 ? "s" : ""}…`);
+    const cards = [];
+    for (const file of files) {
+      const ext = (file.name.split(".").pop() || "").toLowerCase();
+      let texto = "";
+      if (ext === "pdf") texto = await extrairTextoPDF(file);
+      else if (ext === "docx") texto = await extrairTextoDOCX(file);
+      else { toast(`Formato não suportado: ${file.name}`, "error"); continue; }
+
+      const card = parsearHUDeDocumento(texto, file.name);
+      cards.push(card);
+    }
+
+    if (cards.length === 0) {
+      toast("Nenhuma HU pôde ser extraída.", "error");
+      return;
+    }
+
+    const totalCen = cards.reduce((acc, c) => acc + c.cenarios.length, 0);
+    if (totalCen === 0) {
+      toast("Documento(s) lido(s), mas nenhum cenário (Dado/Quando/Então) encontrado.", "error");
+    }
+
+    document.getElementById("projetoInput").value = document.getElementById("projetoInput").value || "";
+    document.getElementById("sprintInput").value = document.getElementById("sprintInput").value || "";
+    document.getElementById("huInput").value = montarHUConsolidadaLimpa(cards);
+    document.getElementById("tipoSistema").value = "web";
+
+    toast(`✅ ${cards.length} HU${cards.length > 1 ? "s" : ""} extraída${cards.length > 1 ? "s" : ""} (${totalCen} cenários). Gerando plano…`);
+    await executarAnaliseHU({ cardsSig: cards });
+  } catch (err) {
+    console.error("[import doc]", err);
+    toast(`Erro ao importar documento: ${err.message}`, "error");
+  }
 });
 
 document.getElementById("fileImportHU").addEventListener("change", async (e) => {
@@ -1747,31 +2274,29 @@ document.getElementById("fileImportHU").addEventListener("change", async (e) => 
       throw new Error("JSON deve ser um array de HUs.");
     }
 
-    const cards = data.map(item => ({
-      codigo: item["Código"] ?? item.codigo ?? item.code,
-      resumo: item["Resumo"] ?? item.resumo ?? item.title ?? "",
-      descricao: item["Descrição"] ?? item.descricao ?? item.description ?? item.hu ?? "",
-      projeto: item["Projeto"] ?? item.projeto ?? item.project ?? "",
-      sprint: item["Sprint"] ?? item.sprint ?? ""
-    })).filter(c => c.descricao && c.descricao.length >= 20);
-
-    if (cards.length === 0) {
-      toast("Nenhuma HU válida encontrada (campo Descrição obrigatório, mín. 20 chars).", "error");
+    const cardsSig = parsearCardsSig(data);
+    if (cardsSig.length === 0) {
+      toast("Nenhuma HU válida encontrada no JSON (mín. 20 chars na descrição ou pelo menos 1 cenário).", "error");
       return;
     }
 
-    const primeiro = cards[0];
+    const temCenarios = cardsSig.some(c => c.cenarios && c.cenarios.length > 0);
+    const primeiro = cardsSig[0];
+
     document.getElementById("projetoInput").value = primeiro.projeto || "";
     document.getElementById("sprintInput").value = primeiro.sprint || "";
-    document.getElementById("telaInput").value = primeiro.sprint
-      ? `Plano Consolidado Sprint ${primeiro.sprint}`
-      : `Plano Consolidado (${cards.length} HUs)`;
-    document.getElementById("huInput").value = montarHUConsolidada(cards);
+    document.getElementById("huInput").value = montarHUConsolidadaLimpa(cardsSig);
     document.getElementById("tipoSistema").value = "web";
     document.getElementById("criticidade").value = "media";
 
-    toast(`📥 ${cards.length} HUs consolidadas. Gerando plano único...`);
-    await executarAnaliseHU();
+    if (temCenarios) {
+      const totalCen = cardsSig.reduce((acc, c) => acc + c.cenarios.length, 0);
+      toast(`📥 ${cardsSig.length} HUs importadas (${totalCen} cenários SIG). Gerando plano...`);
+      await executarAnaliseHU({ cardsSig });
+    } else {
+      toast(`📥 ${cardsSig.length} HUs consolidadas (sem cenários QA no JSON). Gerando plano via regras...`);
+      await executarAnaliseHU();
+    }
   } catch (err) {
     toast(`Erro ao importar JSON: ${err.message}`, "error");
   }

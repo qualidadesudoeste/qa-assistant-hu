@@ -48,7 +48,7 @@ Gere entre 5 e 10 casos adicionais de alta qualidade. Priorize casos que realmen
 
 function buildUserPrompt({ hu, tela, tipoSistema, criticidade, casosExistentes }) {
   return `## Contexto do Sistema
-- **Tela/Funcionalidade:** ${tela || "(não informada)"}
+- **Escopo do Plano:** ${tela || "(não informado)"} — pode envolver múltiplas telas; não cite o nome do plano como se fosse uma tela específica nos casos gerados.
 - **Tipo de Sistema:** ${tipoSistema}
 - **Criticidade:** ${criticidade}
 
