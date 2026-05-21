@@ -1321,9 +1321,11 @@ async function executarAnaliseHU({ skipSupabase = false, cardsSig = null } = {})
 
     const huParseada = parsearHU(hu);
 
-    // Modo SIG: usa cenários do JSON importado como casos, ignora gerador genérico e suíte.
+    // Modo SIG: usa cenários do documento como casos no lugar do gerador genérico.
+    // A suíte aplicável (Funcional, Segurança, Performance, etc.) sempre é calculada
+    // — independente da fonte da HU — porque são checagens transversais de qualidade.
     const modoSig = cardsSig && cardsSig.length > 0 && cardsSig.some(c => c.cenarios && c.cenarios.length);
-    const categorias = modoSig ? [] : selecionarCategoriasAplicaveis(hu, tela, tipoSistema);
+    const categorias = selecionarCategoriasAplicaveis(hu, tela, tipoSistema);
     const casos = modoSig
       ? gerarCasosDeCardsSig(cardsSig)
       : gerarCasosDeTeste(hu, tela, tipoSistema, huParseada);
