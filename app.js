@@ -983,6 +983,22 @@ function bindCheckExecutado(container) {
   });
 }
 
+// Escapa HTML e converte quebras de linha em <br>. Também injeta quebras
+// antes de marcadores de lista comuns ("1.", "a.", "i.") quando estão inline,
+// pra evitar que listas numeradas extraídas do PDF apareçam como um parágrafo único.
+function formatarTextoCaso(s) {
+  if (!s) return "";
+  const escaped = s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  // Adiciona \n antes de "N." e "letra." inline (não no início da string), com fallback conservador.
+  const comQuebras = escaped
+    .replace(/([:;.])\s+(\d+\.\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g, "$1\n$2")
+    .replace(/([:;.])\s+([a-z]\.\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g, "$1\n$2");
+  return comQuebras.replace(/\n/g, "<br>");
+}
+
 function statusBadgeHTML(caseId) {
   const st = statusCasos[caseId] || { status: "nao_executado", fail_count: 0 };
   let badge = "";
@@ -1023,23 +1039,23 @@ function renderCasoCard(c, opts = {}) {
       </div>
       <div class="test-case-section">
         <strong>Tipo</strong>
-        <span>${c.tipo}</span>
+        <span>${formatarTextoCaso(c.tipo)}</span>
       </div>
       <div class="test-case-section">
         <strong>Pré-condições</strong>
-        <ul>${(c.preCondicoes || []).map(p => `<li>${p}</li>`).join("")}</ul>
+        <ul>${(c.preCondicoes || []).map(p => `<li>${formatarTextoCaso(p)}</li>`).join("")}</ul>
       </div>
       <div class="test-case-section">
         <strong>Passos</strong>
-        <ol>${(c.passos || []).map(p => `<li>${p}</li>`).join("")}</ol>
+        <ol>${(c.passos || []).map(p => `<li>${formatarTextoCaso(p)}</li>`).join("")}</ol>
       </div>
       <div class="test-case-section">
         <strong>Resultado Esperado</strong>
-        <p>${c.resultadoEsperado || ""}</p>
+        <p>${formatarTextoCaso(c.resultadoEsperado)}</p>
       </div>
       <div class="test-case-section">
         <strong>Dados de Teste</strong>
-        <p>${c.dadosTeste || ""}</p>
+        <p>${formatarTextoCaso(c.dadosTeste)}</p>
       </div>
       ${extra}
     </div>
@@ -2077,7 +2093,10 @@ async function extrairTextoPDF(file) {
       if (linha) linhas.push(linha);
     }
   }
-  return linhas.join("\n");
+  return linhas
+    .filter(l => !/^P[áa]gina\s+\d+\s+de\s+\d+$/i.test(l)) // rodapé "Página N de M"
+    .join("\n")
+    .replace(/P[áa]gina\s+\d+\s+de\s+\d+/gi, ""); // remove ocorrências inline (PDFs com rodapé colado)
 }
 
 function decodeXmlEntities(s) {
@@ -2120,21 +2139,22 @@ function parsearHUDeDocumento(textoBruto, fileName) {
   const linhas = texto.split("\n").map(l => l.trim()).filter(Boolean);
 
   // ----- Código + Resumo -----
+  // Aceita formatos "HU.04", "HU-04", "HU 04", "HU_04", "HU.18.2", "HU-04.1" etc.
   let codigo = "", resumo = "";
-  const tituloRegex = /\bHU[\s.]?\s*(\d+(?:\.\d+)*)(?:\s*\([^)]*\))?\s*[-–]\s*([^\n[]+?)(?:\s*\[[^\]]+\])?\s*$/im;
+  const tituloRegex = /\bHU[\s.\-_]?\s*(\d+(?:[.\-]\d+)*)(?:\s*\([^)]*\))?\s*[-–\s]+([^\n[]+?)(?:\s*\[[^\]]+\])?\s*$/im;
   for (const l of linhas.slice(0, 15)) {
     const m = l.match(tituloRegex);
     if (m) {
-      codigo = "HU." + m[1];
+      codigo = "HU." + m[1].replace(/-/g, ".");
       resumo = `${codigo} - ${m[2].trim()}`;
       break;
     }
   }
   if (!codigo) {
     const base = (fileName || "documento").replace(/\.(pdf|docx)$/i, "").replace(/\s*\(\d+\)\s*$/, "").trim();
-    const m = base.match(/^HU[\s.]?\s*(\d+(?:\.\d+)*)\s*[-–]\s*(.+)$/i);
+    const m = base.match(/^HU[\s.\-_]?\s*(\d+(?:[.\-]\d+)*)\s*[-–\s]+(.+)$/i);
     if (m) {
-      codigo = "HU." + m[1];
+      codigo = "HU." + m[1].replace(/-/g, ".");
       resumo = `${codigo} - ${m[2].trim()}`;
     } else {
       codigo = base.substring(0, 30) || "HU";
@@ -2298,16 +2318,12 @@ function extrairCriteriosBullets(texto) {
 function extrairCenariosDocumento(texto, linhas) {
   const cenarios = [];
 
-  // PDF / texto inline: "Cenário N. Título" seguido de "Dado que ... quando ... então ..."
-  const blocoCriterios = (() => {
-    const idx = texto.search(/COMPORTAMENTO\s+ESPERADO|CRIT[ÉE]RIOS\s+DE\s+ACEITA[ÇC][ÃA]O|CRIT[ÉE]RIOS\s+DE\s+ACEITE/i);
-    const fim = texto.search(/APROVA[ÇC][ÃA]O\s+DO\s+REQUISITO|ANEXOS\b/i);
-    return idx >= 0 ? texto.substring(idx, fim > idx ? fim : texto.length) : texto;
-  })();
-
-  const regexCenario = /Cen[áa]rio\s+(\d+)[\.\:]?\s*([^\n]+)\n([\s\S]+?)(?=Cen[áa]rio\s+\d+[\.\:]|APROVA[ÇC][ÃA]O|ANEXOS|$)/gi;
+  // Procura cenários no texto inteiro (SUMÁRIO já foi removido por pularSumario).
+  // Docs com múltiplas TELAS têm vários "COMPORTAMENTO ESPERADO" — usar um bloco único
+  // perde cenários. As stop-anchors na regex evitam o "então" vazar pra próxima seção.
+  const regexCenario = /Cen[áa]rio\s+(\d+)[\.\:]?\s*([^\n]+)\n([\s\S]+?)(?=Cen[áa]rio\s+\d+[\.\:]|\bTELA\s+\d+\b|Caminho\s+no\s+menu\s*:|COMPORTAMENTO\s+ESPERADO|CRIT[ÉE]RIOS\s+DE\s+ACEIT|REGRAS\s+DE\s+NEG[ÓO]CIO|INTERFACE\s+DE\s+USU|APROVA[ÇC][ÃA]O|ANEXOS|$)/gi;
   let m;
-  while ((m = regexCenario.exec(blocoCriterios)) !== null) {
+  while ((m = regexCenario.exec(texto)) !== null) {
     const numero = m[1];
     const titulo = (m[2] || "").replace(/[\s.,;:]+$/, "").trim();
     const subCenarios = parsearDadoQuandoEntao(m[3]);
@@ -2367,10 +2383,13 @@ function parsearDadoQuandoEntao(bloco) {
 }
 
 function limparTextoCenario(s) {
+  // Preserva quebras de linha (listas numeradas / bullets viram linhas separadas no display)
+  // e normaliza só espaços horizontais dentro de cada linha.
   return (s || "")
-    .replace(/[●○•]\s*/g, "")
-    .replace(/\n+/g, " ")
-    .replace(/\s+/g, " ")
+    .split("\n")
+    .map(l => l.replace(/^\s*[●○•]\s*/, "").replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n")
     .replace(/^[\s,;.]+|[\s,;.]+$/g, "")
     .trim();
 }
@@ -2415,14 +2434,15 @@ document.getElementById("fileImportDoc").addEventListener("change", async (e) =>
     return;
   }
 
-  // Acumula com cards já importados anteriormente (dedup por código).
-  // Importar a mesma HU 2x substitui; HUs diferentes vão sendo somadas.
+  // Acumula com cards já importados anteriormente (dedup por código+resumo).
+  // Importar a mesma HU 2x substitui; HUs diferentes (mesmo com código similar) vão sendo somadas.
   const cardsExistentes = (ultimoResultado && Array.isArray(ultimoResultado.cardsSig))
     ? ultimoResultado.cardsSig : [];
   const merged = new Map();
   let chaveAuto = 0;
   for (const c of [...cardsExistentes, ...cards]) {
-    const chave = c.codigo || c.resumo || `auto-${++chaveAuto}`;
+    const base = `${c.codigo || ""}|${c.resumo || ""}`;
+    const chave = base.length > 1 ? base : `auto-${++chaveAuto}`;
     merged.set(chave, c);
   }
   const allCards = Array.from(merged.values());
