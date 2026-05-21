@@ -1966,12 +1966,18 @@ function gerarCasosDeCardsSig(cards) {
       });
     });
 
-    // Casos a partir dos critérios em lista (regras de negócio / aceite não-BDD)
+    // Casos a partir dos critérios em lista (regras de negócio / aceite não-BDD).
+    // Usa o texto do critério como título (1ª frase, truncada) pra evitar todos
+    // ficarem com nome genérico "Critério de aceite #N" no sumário do PDF.
     (card.criterios || []).forEach((crit, idx) => {
       const num = String(idx + 1).padStart(2, "0");
+      const primeiraFrase = (crit.split(/[.;]\s/)[0] || crit).trim();
+      const tituloCurto = primeiraFrase.length > 90
+        ? primeiraFrase.substring(0, 87).trim() + "…"
+        : primeiraFrase;
       casos.push({
         id: `${cod}-CRIT${num}`,
-        titulo: `Critério de aceite #${idx + 1}`,
+        titulo: tituloCurto,
         prioridade: "alta",
         tipo: `Critério de Aceite #${cod}`,
         preCondicoes: [`o usuário está na funcionalidade descrita no ${cod}`],
