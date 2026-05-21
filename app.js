@@ -1278,6 +1278,10 @@ function renderizarCasosIA(analise) {
 // analisando…" e re-executavam o pipeline).
 let _analiseEmCurso = false;
 
+// Cards SIG importados (PDF/DOCX/JSON) que ainda não foram analisados.
+// A análise só roda quando o usuário clica em "Analisar HU e Gerar Testes".
+let cardsSigPendentes = [];
+
 async function executarAnaliseHU({ skipSupabase = false, cardsSig = null } = {}) {
   if (_analiseEmCurso) {
     toast("⏳ Aguarde a análise atual terminar…", "error");
@@ -1399,7 +1403,10 @@ async function executarAnaliseHU({ skipSupabase = false, cardsSig = null } = {})
 }
 
 // ---------- Event Handlers ----------
-document.getElementById("btnAnalisar").addEventListener("click", () => executarAnaliseHU());
+document.getElementById("btnAnalisar").addEventListener("click", () => {
+  const cards = cardsSigPendentes.length ? cardsSigPendentes : null;
+  executarAnaliseHU({ cardsSig: cards });
+});
 
 document.getElementById("btnLimpar").addEventListener("click", () => {
   document.getElementById("huInput").value = "";
@@ -1410,6 +1417,7 @@ document.getElementById("btnLimpar").addEventListener("click", () => {
   ultimoResultado = null;
   planoAtualId = null;
   statusCasos = {};
+  cardsSigPendentes = [];
 });
 
 document.getElementById("btnExample").addEventListener("click", () => {
@@ -1764,6 +1772,7 @@ async function retomarPlanoSalvo(planId) {
       analiseIA: r.analiseIA || null,
       cardsSig: r.cardsSig || null
     };
+    cardsSigPendentes = Array.isArray(r.cardsSig) ? r.cardsSig : [];
 
     renderizarResumo(plano.hu, plano.tela, plano.tipo_sistema, plano.criticidade,
       ultimoResultado.huParseada, ultimoResultado.categorias, ultimoResultado.casos, ultimoResultado.cobertura);
@@ -2440,10 +2449,11 @@ document.getElementById("fileImportDoc").addEventListener("change", async (e) =>
     return;
   }
 
-  // Acumula com cards já importados anteriormente (dedup por código+resumo).
+  // Acumula com cards já pendentes (e com os de um plano já analisado, se houver).
   // Importar a mesma HU 2x substitui; HUs diferentes (mesmo com código similar) vão sendo somadas.
-  const cardsExistentes = (ultimoResultado && Array.isArray(ultimoResultado.cardsSig))
-    ? ultimoResultado.cardsSig : [];
+  const cardsExistentes = cardsSigPendentes.length
+    ? cardsSigPendentes
+    : ((ultimoResultado && Array.isArray(ultimoResultado.cardsSig)) ? ultimoResultado.cardsSig : []);
   const merged = new Map();
   let chaveAuto = 0;
   for (const c of [...cardsExistentes, ...cards]) {
@@ -2452,6 +2462,7 @@ document.getElementById("fileImportDoc").addEventListener("change", async (e) =>
     merged.set(chave, c);
   }
   const allCards = Array.from(merged.values());
+  cardsSigPendentes = allCards;
   const novos = allCards.length - cardsExistentes.length;
 
   const totalCen = allCards.reduce((acc, c) => acc + (c.cenarios?.length || 0), 0);
@@ -2475,13 +2486,7 @@ document.getElementById("fileImportDoc").addEventListener("change", async (e) =>
   const msgNovos = novos > 0 && cardsExistentes.length > 0
     ? `+${novos} nova${novos > 1 ? "s" : ""} HU (total ${allCards.length})`
     : `${allCards.length} HU${allCards.length > 1 ? "s" : ""}`;
-  toast(`✅ ${msgNovos} • ${totalCen} cenários BDD, ${totalCrit} critérios. Gerando plano…`);
-  try {
-    await executarAnaliseHU({ cardsSig: allCards });
-  } catch (err) {
-    console.error("[analise]", err);
-    toast(`Erro ao gerar plano: ${err.message}`, "error");
-  }
+  toast(`📥 ${msgNovos} • ${totalCen} cenários BDD, ${totalCrit} critérios. Clique em "Analisar HU e Gerar Testes" para gerar o plano.`);
 });
 
 document.getElementById("fileImportHU").addEventListener("change", async (e) => {
@@ -2512,12 +2517,12 @@ document.getElementById("fileImportHU").addEventListener("change", async (e) => 
     document.getElementById("criticidade").value = "media";
 
     if (temCenarios) {
+      cardsSigPendentes = cardsSig;
       const totalCen = cardsSig.reduce((acc, c) => acc + c.cenarios.length, 0);
-      toast(`📥 ${cardsSig.length} HUs importadas (${totalCen} cenários SIG). Gerando plano...`);
-      await executarAnaliseHU({ cardsSig });
+      toast(`📥 ${cardsSig.length} HUs importadas (${totalCen} cenários SIG). Clique em "Analisar HU e Gerar Testes" para gerar o plano.`);
     } else {
-      toast(`📥 ${cardsSig.length} HUs consolidadas (sem cenários QA no JSON). Gerando plano via regras...`);
-      await executarAnaliseHU();
+      cardsSigPendentes = [];
+      toast(`📥 ${cardsSig.length} HUs consolidadas (sem cenários QA no JSON). Clique em "Analisar HU e Gerar Testes" para gerar o plano via regras.`);
     }
   } catch (err) {
     toast(`Erro ao importar JSON: ${err.message}`, "error");
