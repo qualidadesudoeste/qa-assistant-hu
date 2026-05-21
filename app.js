@@ -521,7 +521,7 @@ function gerarCasosDeTeste(hu, tela, tipoSistema, huParseada) {
   }
 
   // CT: IA
-  if (/ia\b|chatbot|assistente|gpt|llm|intelig[eê]ncia artificial|machine learning/i.test(textoNorm) || tipoSistema === "ia") {
+  if (/chatbot|gpt|llm|intelig[eê]ncia artificial|machine learning/i.test(textoNorm) || tipoSistema === "ia") {
     casos.push({
       id: novoID(),
       titulo: "Verificação de alucinação em resposta factual",
@@ -694,7 +694,7 @@ function analisarCoberturaRiscos(hu, tela, tipoSistema, categorias, casos) {
     });
   }
 
-  if (/ia\b|chatbot|llm|gpt/i.test(textoNorm) || tipoSistema === "ia") {
+  if (/chatbot|llm|gpt|intelig[eê]ncia artificial|machine learning/i.test(textoNorm) || tipoSistema === "ia") {
     riscos.push({
       nivel: "alto",
       descricao: "Sistema usa IA — risco de alucinações, viés e prompt injection. Requer testes específicos de robustez e veracidade."
