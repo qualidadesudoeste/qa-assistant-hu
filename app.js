@@ -1257,7 +1257,16 @@ function renderizarCasosIA(analise) {
 }
 
 // ---------- Análise (extraída para reuso entre botão e batch import) ----------
+// Lock de concorrência: impede que cliques rápidos ou imports em sequência
+// disparem múltiplas análises sobrepostas (que deixavam o botão preso em "IA
+// analisando…" e re-executavam o pipeline).
+let _analiseEmCurso = false;
+
 async function executarAnaliseHU({ skipSupabase = false, cardsSig = null } = {}) {
+  if (_analiseEmCurso) {
+    toast("⏳ Aguarde a análise atual terminar…", "error");
+    return false;
+  }
   const hu = document.getElementById("huInput").value.trim();
   const projeto = document.getElementById("projetoInput").value.trim();
   const sprint = document.getElementById("sprintInput").value.trim();
@@ -1279,6 +1288,9 @@ async function executarAnaliseHU({ skipSupabase = false, cardsSig = null } = {})
     toast("Preencha Projeto e Sprint para salvar o plano.", "error");
     return false;
   }
+
+  // Adquire lock só após passar pelas validações (senão um early-return prenderia o lock).
+  _analiseEmCurso = true;
 
   const btn = document.getElementById("btnAnalisar");
   const btnOriginal = btn.innerHTML;
@@ -1366,6 +1378,7 @@ async function executarAnaliseHU({ skipSupabase = false, cardsSig = null } = {})
   } finally {
     btn.disabled = false;
     btn.innerHTML = btnOriginal;
+    _analiseEmCurso = false;
   }
 }
 
@@ -2402,27 +2415,43 @@ document.getElementById("fileImportDoc").addEventListener("change", async (e) =>
     return;
   }
 
-  const totalCen = cards.reduce((acc, c) => acc + (c.cenarios?.length || 0), 0);
-  const totalCrit = cards.reduce((acc, c) => acc + (c.criterios?.length || 0), 0);
+  // Acumula com cards já importados anteriormente (dedup por código).
+  // Importar a mesma HU 2x substitui; HUs diferentes vão sendo somadas.
+  const cardsExistentes = (ultimoResultado && Array.isArray(ultimoResultado.cardsSig))
+    ? ultimoResultado.cardsSig : [];
+  const merged = new Map();
+  let chaveAuto = 0;
+  for (const c of [...cardsExistentes, ...cards]) {
+    const chave = c.codigo || c.resumo || `auto-${++chaveAuto}`;
+    merged.set(chave, c);
+  }
+  const allCards = Array.from(merged.values());
+  const novos = allCards.length - cardsExistentes.length;
+
+  const totalCen = allCards.reduce((acc, c) => acc + (c.cenarios?.length || 0), 0);
+  const totalCrit = allCards.reduce((acc, c) => acc + (c.criterios?.length || 0), 0);
 
   // Auto-preenche projeto/sprint a partir dos cards (do PROJETO: e (SPRINT N) no arquivo).
   // executarAnaliseHU exige ambos preenchidos; auto-fill evita bloqueio silencioso quando vazios.
   const projetoEl = document.getElementById("projetoInput");
   const sprintEl = document.getElementById("sprintInput");
   if (!projetoEl.value.trim()) {
-    const primeiroProj = cards.find(c => c.projeto)?.projeto;
+    const primeiroProj = allCards.find(c => c.projeto)?.projeto;
     projetoEl.value = primeiroProj || "Documento Importado";
   }
   if (!sprintEl.value.trim()) {
-    const primeiroSpr = cards.find(c => c.sprint)?.sprint;
+    const primeiroSpr = allCards.find(c => c.sprint)?.sprint;
     sprintEl.value = primeiroSpr || "S/N";
   }
-  document.getElementById("huInput").value = montarHUConsolidadaLimpa(cards);
+  document.getElementById("huInput").value = montarHUConsolidadaLimpa(allCards);
   document.getElementById("tipoSistema").value = "web";
 
-  toast(`✅ ${cards.length} HU${cards.length > 1 ? "s" : ""} extraída${cards.length > 1 ? "s" : ""} (${totalCen} cenários BDD, ${totalCrit} critérios). Gerando plano…`);
+  const msgNovos = novos > 0 && cardsExistentes.length > 0
+    ? `+${novos} nova${novos > 1 ? "s" : ""} HU (total ${allCards.length})`
+    : `${allCards.length} HU${allCards.length > 1 ? "s" : ""}`;
+  toast(`✅ ${msgNovos} • ${totalCen} cenários BDD, ${totalCrit} critérios. Gerando plano…`);
   try {
-    await executarAnaliseHU({ cardsSig: cards });
+    await executarAnaliseHU({ cardsSig: allCards });
   } catch (err) {
     console.error("[analise]", err);
     toast(`Erro ao gerar plano: ${err.message}`, "error");
